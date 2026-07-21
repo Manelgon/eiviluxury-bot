@@ -1,0 +1,56 @@
+# ============================================================
+# Stack "eiviluxury-bot" para Portainer (Swarm) — bot + Redis
+# Reutiliza tu Evolution API existente con una instancia NUEVA
+# (número de WhatsApp de la clínica).
+# Nombre del stack recomendado: eiviluxury-bot
+# Webhook en Evolution: http://eiviluxury-bot_bot:3000/webhook
+# ============================================================
+
+version: "3.8"
+
+services:
+  bot:
+    image: ghcr.io/manelgon/eiviluxury-bot:latest
+    environment:
+      - PORT=3000
+      - EVOLUTION_API_URL=http://evolution_evolution_api:8080
+      - EVOLUTION_API_KEY=PON-AQUI-LA-KEY-DE-TU-EVOLUTION          # ⬅️ la misma del bot JTM
+      - EVOLUTION_INSTANCE=eiviluxury                              # ⬅️ instancia NUEVA en Evolution
+      - OPENAI_API_KEY=PON-AQUI-TU-SK-PROJ                         # ⬅️
+      - OPENAI_MODEL=gpt-4o-mini
+      - SUPABASE_URL=https://bteosxrgjrspjiyqhmxh.supabase.co
+      - SUPABASE_SERVICE_ROLE_KEY=PON-AQUI-TU-SERVICE-ROLE-KEY     # ⬅️ la misma del bot JTM
+      - REDIS_URL=redis://redis:6379/0
+      - DEBOUNCE_MS=8000
+      - NUMEROS_PERMITIDOS=34689650991
+      - RECORDATORIO_HORAS=24
+      - RECORDATORIO_INTERVALO_MIN=5
+      - PRIVACIDAD_URL=https://www.eiviluxury.com/aviso-legal-y-politica-de-privacidad/
+    networks:
+      - default
+      - automatizatelo
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_eivi_data:/data
+    networks:
+      - default
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+networks:
+  default:
+    driver: overlay
+  automatizatelo:
+    external: true
+    name: AutomatizateloNet
+
+volumes:
+  redis_eivi_data:
