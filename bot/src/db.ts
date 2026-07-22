@@ -179,6 +179,45 @@ export async function huecosDisponibles(medicoId: number, fecha: string, duracio
   return huecos; // ["09:00","09:30",...]
 }
 
+/**
+ * Las 3 citas disponibles más cercanas de un médico.
+ * - Sin preferencia: las 3 primeras a partir de hoy (o de fecha_preferida).
+ * - Con fecha+hora preferida: las 3 más próximas a esa hora ese día (antes o
+ *   después); si ese día no hay suficientes, completa con los siguientes días.
+ */
+export async function citasCercanas(
+  medicoId: number,
+  duracionMin: number,
+  fechaPref: string | null,
+  horaPref: string | null
+): Promise<{ fecha: string; hora: string }[]> {
+  const { hoyMadrid, sumarDias } = await import("./tiempo.js");
+  const base = fechaPref ?? hoyMadrid();
+  const todos: { fecha: string; hora: string }[] = [];
+
+  for (let d = 0; d < 21; d++) {
+    const fecha = sumarDias(base, d);
+    const huecos = await huecosDisponibles(medicoId, fecha, duracionMin);
+    for (const hora of huecos) todos.push({ fecha, hora });
+    // Sin hora preferida basta con las 3 primeras; con hora preferida
+    // necesitamos el día pedido completo + reserva de días siguientes.
+    if (!horaPref && todos.length >= 3) break;
+    if (horaPref && d > 0 && todos.length >= 6) break;
+  }
+
+  if (horaPref && fechaPref) {
+    const aMin = (h: string) => parseInt(h.slice(0, 2), 10) * 60 + parseInt(h.slice(3, 5), 10);
+    const pref = aMin(horaPref);
+    const delDia = todos
+      .filter((t) => t.fecha === fechaPref)
+      .sort((a, b) => Math.abs(aMin(a.hora) - pref) - Math.abs(aMin(b.hora) - pref))
+      .slice(0, 3);
+    const resto = todos.filter((t) => t.fecha !== fechaPref).slice(0, 3 - delDia.length);
+    return [...delDia, ...resto].slice(0, 3);
+  }
+  return todos.slice(0, 3);
+}
+
 export async function crearCita(
   clienteId: number,
   medicoId: number,

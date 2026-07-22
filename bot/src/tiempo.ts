@@ -42,3 +42,10 @@ export function horaMadrid(d: Date): string {
 export function sumarMin(d: Date, min: number): Date {
   return new Date(d.getTime() + min * 60_000);
 }
+
+/** Suma días a una fecha "YYYY-MM-DD" y devuelve "YYYY-MM-DD". */
+export function sumarDias(fecha: string, dias: number): string {
+  const d = new Date(`${fecha}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}

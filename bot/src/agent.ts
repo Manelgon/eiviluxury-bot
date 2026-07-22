@@ -8,6 +8,7 @@ import {
   listarAreasConMedicos,
   listarTratamientos,
   huecosDisponibles,
+  citasCercanas,
   crearCita,
   citasDeCliente,
   cancelarCita,
@@ -75,8 +76,26 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "citas_cercanas",
+      description:
+        "Las 3 citas disponibles MÁS CERCANAS de un médico. Es la herramienta por defecto para proponer citas. Sin preferencia: las 3 primeras desde hoy. Si el cliente pidió día y/u hora: pásalos y devuelve las 3 más próximas a esa hora (antes o después), completando con días siguientes si hace falta.",
+      parameters: {
+        type: "object",
+        properties: {
+          medico_id: { type: "integer" },
+          duracion_min: { type: "integer", description: "Duración del tratamiento; 30 si no se sabe" },
+          fecha_preferida: { type: "string", description: "YYYY-MM-DD si el cliente pidió un día (opcional)" },
+          hora_preferida: { type: "string", description: "HH:MM si el cliente pidió una hora (opcional, requiere fecha)" },
+        },
+        required: ["medico_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "buscar_huecos",
-      description: "Huecos libres de un médico en una fecha concreta.",
+      description: "TODOS los huecos libres de un médico en una fecha concreta. Solo si el cliente pide explícitamente ver el día completo; para proponer citas usa citas_cercanas.",
       parameters: {
         type: "object",
         properties: {
@@ -204,7 +223,9 @@ Puedo ofrecerte:
 
 TU TRABAJO:
 1. Informar sobre la clínica, áreas, tratamientos y precios (solo los de listar_tratamientos con precio fijo). Para detalles de un tratamiento (en qué consiste, cómo funciona, sesiones, resultados) usa buscar_informacion y responde SOLO con lo recuperado — es información divulgativa de la clínica, no consejo médico personalizado: cierra ofreciendo cita de valoración cuando encaje.
-2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al cliente, propón huecos reales de buscar_huecos y confirma médico + fecha + hora antes de reservar.
+2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al cliente y confirma médico + fecha + hora antes de reservar.
+   - Al proponer cita, ofrece SIEMPRE 3 opciones concretas: las 3 disponibles más cercanas (citas_cercanas), en una mini-lista clara ("• jueves 24, 10:00 • jueves 24, 12:30 • viernes 25, 9:30").
+   - Si el cliente pide un día y una hora concretos y ese hueco está libre, resérvalo directamente (confirmando antes). Si NO está libre, ofrécele las 3 más próximas a la hora pedida — antes o después — usando citas_cercanas con fecha_preferida y hora_preferida.
    - Cambiar/cancelar/consultar citas: SOLO para clientes registrados con alguna cita reservada (mis_citas). Un cliente con citas puede además reservar nuevas citas con normalidad.
    - Un cliente PUEDE tener varias citas el mismo día si son de áreas/tratamientos distintos (ej. nutrición por la mañana y láser por la tarde). Lo que NO puede es tener dos citas del mismo tratamiento (o mismo médico) el mismo día — el sistema lo rechazará: ofrécele otro día o cambiar la existente.
 3. Alta de nuevos clientes — SOLO como parte de reservar una cita, nunca como opción suelta. NUNCA ofrezcas "registrarte" como servicio: a quien no es cliente dale información libremente sin pedirle datos. El alta empieza únicamente cuando quiere AGENDAR y identificar_cliente indica que no está registrado (o sin consentimiento). El ORDEN del alta es OBLIGATORIO, un paso por mensaje:
@@ -261,6 +282,15 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
         return JSON.stringify(await listarAreasConMedicos());
       case "listar_tratamientos":
         return JSON.stringify(await listarTratamientos(input.area ? String(input.area) : undefined));
+      case "citas_cercanas": {
+        const opciones = await citasCercanas(
+          Number(input.medico_id),
+          Number(input.duracion_min ?? 30),
+          input.fecha_preferida ? String(input.fecha_preferida) : null,
+          input.hora_preferida ? String(input.hora_preferida) : null
+        );
+        return JSON.stringify({ opciones });
+      }
       case "buscar_huecos": {
         const huecos = await huecosDisponibles(
           Number(input.medico_id),
