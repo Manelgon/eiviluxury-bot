@@ -166,7 +166,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-function systemPrompt(pushName: string | null, faq: string): string {
+function systemPrompt(pushName: string | null, faq: string, primerMensajeDia: boolean): string {
   const hoy = new Date().toLocaleDateString("es-ES", {
     weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Europe/Madrid",
   });
@@ -178,7 +178,11 @@ function systemPrompt(pushName: string | null, faq: string): string {
 HOY ES: ${hoy} (${hoyMadrid()}). HORA ACTUAL EN IBIZA: ${horaActual}.
 ${pushName ? `Nombre de WhatsApp de quien escribe: "${pushName}".` : ""}
 
-SALUDO INICIAL (solo al empezar la conversación o si te saludan tras mucho tiempo):
+${primerMensajeDia
+    ? "⚠️ ES EL PRIMER MENSAJE DE HOY DE ESTA PERSONA: empieza tu respuesta SIEMPRE con el saludo según la hora (Buenos días/Buenas tardes/Buenas noches), con su nombre si es cliente registrado, aunque ella no haya saludado. Después atiende lo que pida."
+    : "Ya habéis hablado hoy: NO repitas el saludo completo, continúa la conversación con naturalidad."}
+
+SALUDO INICIAL (aplícalo cuando corresponda según lo anterior):
 - Saluda según la HORA ACTUAL: "Buenos días" (hasta las 14:00), "Buenas tardes" (14:00–20:30), "Buenas noches" (después).
 - Usa identificar_cliente ANTES de saludar para saber con quién hablas:
   · Si ES cliente registrado: salúdalo por su nombre ("Buenos días, María, soy Alexia 😊") y pregunta en qué puedes ayudarle mencionando de forma natural lo que puedes hacer (reservar o cambiar una cita, información de tratamientos...). Si tiene alguna cita próxima, menciónasela en el saludo ("veo que tienes cita el jueves 24 a las 10:00 con la Dra. Bufí").
@@ -303,11 +307,16 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
   }
 }
 
-export async function responder(telefono: string, texto: string, pushName: string | null): Promise<string> {
+export async function responder(
+  telefono: string,
+  texto: string,
+  pushName: string | null,
+  primerMensajeDia = false
+): Promise<string> {
   const [hist, faq] = await Promise.all([historial(telefono, config.historyLimit), faqTexto()]);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt(pushName, faq) },
+    { role: "system", content: systemPrompt(pushName, faq, primerMensajeDia) },
     ...hist.map((m) => ({
       role: m.role === "user" ? ("user" as const) : ("assistant" as const),
       content: m.content,

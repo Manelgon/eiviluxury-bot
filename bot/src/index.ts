@@ -1,6 +1,7 @@
 import express from "express";
 import { config } from "./config.js";
-import { encolarMensaje } from "./debounce.js";
+import { encolarMensaje, redis } from "./debounce.js";
+import { hoyMadrid } from "./tiempo.js";
 import { responder } from "./agent.js";
 import { enviarTexto, marcarEscribiendo } from "./evolution.js";
 import { guardarMensaje } from "./db.js";
@@ -61,7 +62,13 @@ app.post("/webhook", (req, res) => {
       void encolarMensaje(telefono, texto.trim(), pushName, async (tel, agrupado, nombre) => {
         console.log(`🤖 Procesando lote de ${tel}`);
         try {
-          const salida = await responder(tel, agrupado, nombre);
+          // ¿Primer mensaje del día de este teléfono? (para el saludo)
+          const hoy = hoyMadrid();
+          const ultimoDia = await redis.get(`dia:${tel}`).catch(() => null);
+          const primerMensajeDia = ultimoDia !== hoy;
+          await redis.set(`dia:${tel}`, hoy, "EX", 60 * 60 * 48).catch(() => {});
+
+          const salida = await responder(tel, agrupado, nombre, primerMensajeDia);
           await enviarTexto(tel, salida);
           await guardarMensaje(tel, "saliente", salida);
           console.log(`📤 ${tel}: ${salida.slice(0, 120)}...`);
