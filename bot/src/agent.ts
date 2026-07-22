@@ -139,6 +139,21 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "buscar_informacion",
+      description:
+        "Busca en las fichas detalladas de tratamientos de la clínica (qué es, cómo funciona, indicaciones, sesiones, resultados). Úsala cuando pregunten detalles de un tratamiento que no estén en tu contexto. Responde SOLO con lo que devuelva; si no hay nada relevante, deriva a recepción.",
+      parameters: {
+        type: "object",
+        properties: {
+          consulta: { type: "string", description: "La pregunta o tema a buscar, en español" },
+        },
+        required: ["consulta"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "escalar_a_recepcion",
       description:
         "Marca la conversación para recepción: urgencias no vitales, gestiones administrativas, quejas, dudas médicas, o cuando lo pidan.",
@@ -171,7 +186,7 @@ SALUDO INICIAL (solo al empezar la conversación o si te saludan tras mucho tiem
 - El saludo completo debe caber en 2-3 frases. Recuerda: nada de menús numerados.
 
 TU TRABAJO:
-1. Informar sobre la clínica, áreas, tratamientos y precios (solo los de listar_tratamientos con precio fijo).
+1. Informar sobre la clínica, áreas, tratamientos y precios (solo los de listar_tratamientos con precio fijo). Para detalles de un tratamiento (en qué consiste, cómo funciona, sesiones, resultados) usa buscar_informacion y responde SOLO con lo recuperado — es información divulgativa de la clínica, no consejo médico personalizado: cierra ofreciendo cita de valoración cuando encaje.
 2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al cliente, propón huecos reales de buscar_huecos y confirma médico + fecha + hora antes de reservar.
 3. Alta de nuevos clientes — SOLO como parte de reservar una cita, nunca como opción suelta:
    - NUNCA ofrezcas "registrarte" como servicio ni propongas el alta por sí sola. A quien no es cliente puedes darle información libremente (tratamientos, precios, horarios, dirección) sin pedirle ningún dato.
@@ -269,6 +284,11 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
         if (!cliente) return JSON.stringify({ ok: false, error: "Cliente no registrado" });
         const ok = await confirmarCita(Number(input.cita_id), cliente.id);
         return JSON.stringify({ ok });
+      }
+      case "buscar_informacion": {
+        const { buscarInformacion } = await import("./rag.js");
+        const resultados = await buscarInformacion(String(input.consulta));
+        return JSON.stringify({ resultados });
       }
       case "escalar_a_recepcion": {
         await escalarARecepcion(telefono, String(input.motivo ?? "sin motivo"));

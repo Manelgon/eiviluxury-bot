@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(git push -u origin main)",
+      "PowerShell(git add bot/src/agent.ts)",
+      "PowerShell(git push)",
+      "PowerShell(git add .)",
+      "PowerShell(git commit -m \"rag tratamientos\")"
+    ]
+  }
+}

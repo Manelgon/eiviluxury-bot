@@ -5,6 +5,7 @@ import { responder } from "./agent.js";
 import { enviarTexto, marcarEscribiendo } from "./evolution.js";
 import { guardarMensaje } from "./db.js";
 import { iniciarRecordatorios } from "./scheduler.js";
+import { ingestarSiVacio } from "./rag.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -82,4 +83,5 @@ app.listen(config.port, () => {
   console.log(`✅ Bot EiviLuxury escuchando en puerto ${config.port}`);
   console.log(`   Debounce: ${config.debounceMs} ms · Modelo: ${config.openaiModel}`);
   iniciarRecordatorios();
+  void ingestarSiVacio();
 });
