@@ -4,7 +4,7 @@ import { KNOWLEDGE } from "./knowledge.js";
 import { hoyMadrid } from "./tiempo.js";
 import {
   clientePorTelefono,
-  registrarCliente,
+  guardarDatoCliente,
   listarAreasConMedicos,
   listarTratamientos,
   huecosDisponibles,
@@ -32,18 +32,22 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "registrar_cliente",
+      name: "guardar_dato_cliente",
       description:
-        "Da de alta al cliente que escribe (o completa sus datos). SOLO llamarla cuando ya tengas nombre, apellidos y el cliente haya respondido explícitamente que ACEPTA la política de privacidad que le has enviado. Si no acepta, no la llames.",
+        "Guarda EN EL MOMENTO cada dato del alta según el cliente lo confirma: llámala tras cada paso, no al final. El primer guardado debe ser acepta_privacidad=true (sin consentimiento explícito la base de datos rechaza crear al cliente). Después: nombre/apellidos cuando los diga, telefono_contacto solo si prefiere otro número.",
       parameters: {
         type: "object",
         properties: {
+          acepta_privacidad: { type: "boolean", description: "true solo si acaba de aceptar explícitamente la política" },
           nombre: { type: "string" },
           apellidos: { type: "string" },
-          email: { type: "string", description: "Opcional" },
-          acepta_privacidad: { type: "boolean", description: "true solo si ha dicho claramente que acepta" },
+          email: { type: "string" },
+          telefono_contacto: {
+            type: "string",
+            description: "SOLO si prefiere que le contacten en un número distinto al WhatsApp. Formato 34XXXXXXXXX.",
+          },
         },
-        required: ["nombre", "apellidos", "acepta_privacidad"],
+        required: [],
       },
     },
   },
@@ -192,11 +196,11 @@ SALUDO INICIAL (aplícalo cuando corresponda según lo anterior):
 TU TRABAJO:
 1. Informar sobre la clínica, áreas, tratamientos y precios (solo los de listar_tratamientos con precio fijo). Para detalles de un tratamiento (en qué consiste, cómo funciona, sesiones, resultados) usa buscar_informacion y responde SOLO con lo recuperado — es información divulgativa de la clínica, no consejo médico personalizado: cierra ofreciendo cita de valoración cuando encaje.
 2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al cliente, propón huecos reales de buscar_huecos y confirma médico + fecha + hora antes de reservar.
-3. Alta de nuevos clientes — SOLO como parte de reservar una cita, nunca como opción suelta:
-   - NUNCA ofrezcas "registrarte" como servicio ni propongas el alta por sí sola. A quien no es cliente puedes darle información libremente (tratamientos, precios, horarios, dirección) sin pedirle ningún dato.
-   - El alta empieza únicamente cuando quiere AGENDAR una cita y identificar_cliente indica que no está registrado (o sin consentimiento). Entonces: explícale en una frase que para reservar necesitas darle de alta, y pide los datos de uno en uno (nombre → apellidos).
-   - Con los datos ya recogidos, ANTES de registrarlo envíale el enlace de la política de privacidad (${config.privacidadUrl}) y pregúntale si la acepta para poder iniciar el registro. SOLO tras un "sí" claro llama a registrar_cliente con acepta_privacidad=true, y continúa con la reserva (área/médico → huecos → confirmar).
-   - Si no acepta, no guardes nada ni insistas: indícale con elegancia que sin ese consentimiento no puedes reservarle por WhatsApp y que puede llamar al 971 312 902.
+3. Alta de nuevos clientes — SOLO como parte de reservar una cita, nunca como opción suelta. NUNCA ofrezcas "registrarte" como servicio: a quien no es cliente dale información libremente sin pedirle datos. El alta empieza únicamente cuando quiere AGENDAR y identificar_cliente indica que no está registrado (o sin consentimiento). El ORDEN del alta es OBLIGATORIO, un paso por mensaje:
+   - PASO 1 — PRIVACIDAD (puerta de entrada): explícale en una frase que para darle de alta necesitas su conformidad con la política de privacidad, envíale el enlace (${config.privacidadUrl}) y pide confirmación EXPLÍCITA ("¿la aceptas?"). Solo un "sí/acepto/de acuerdo" claro permite continuar → en ese momento llama a guardar_dato_cliente con acepta_privacidad=true. Si no responde afirmativamente de forma explícita, si duda o si la rechaza: NO continúes el flujo de agendar, no guardes ningún dato, y con elegancia indícale que puede llamar al 971 312 902.
+   - PASO 2 — pregunta su nombre y apellidos → cuando responda, guarda al momento con guardar_dato_cliente (nombre, apellidos).
+   - PASO 3 — confirma el teléfono: "¿Te contactamos en este número desde el que me escribes?" Si dice que sí, ya está guardado. Si dice que no, pídele el número correcto → guarda con guardar_dato_cliente (telefono_contacto).
+   - REGLA: cada dato se guarda EN CUANTO el cliente lo confirma, no al final. Terminados los 3 pasos, continúa la reserva (área/médico → huecos → confirmar).
 
 LÍMITES SANITARIOS (obligatorios, sin excepción):
 - NUNCA des diagnósticos, consejos médicos, valoraciones de síntomas, fotos, medicaciones o resultados. Ante cualquier consulta clínica ("¿esto que tengo es...?", "¿me conviene...?", "¿es normal que...?"), responde que eso debe valorarlo un médico y ofrece cita con el área adecuada.
@@ -229,18 +233,18 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
         const citas = await citasDeCliente(cliente.id);
         return JSON.stringify({ registrado: true, cliente, proximas_citas: citas });
       }
-      case "registrar_cliente": {
-        if (!input.acepta_privacidad) {
-          return JSON.stringify({ ok: false, error: "Sin consentimiento no se puede registrar" });
-        }
-        const c = await registrarCliente(
-          telefono,
-          String(input.nombre),
-          String(input.apellidos),
-          input.email ? String(input.email) : null,
-          true
-        );
-        return JSON.stringify({ ok: true, cliente: c });
+      case "guardar_dato_cliente": {
+        const r = await guardarDatoCliente(telefono, {
+          consentimiento: input.acepta_privacidad === true,
+          nombre: input.nombre !== undefined ? String(input.nombre) : undefined,
+          apellidos: input.apellidos !== undefined ? String(input.apellidos) : undefined,
+          email: input.email !== undefined ? String(input.email) : undefined,
+          telefonoContacto:
+            input.telefono_contacto !== undefined
+              ? String(input.telefono_contacto).replace(/^\+/, "")
+              : undefined,
+        });
+        return JSON.stringify(r);
       }
       case "listar_areas_y_medicos":
         return JSON.stringify(await listarAreasConMedicos());

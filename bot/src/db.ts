@@ -29,30 +29,63 @@ export async function clientePorTelefono(telefono: string): Promise<Cliente | nu
   return data;
 }
 
-export async function registrarCliente(
+/**
+ * Guardado incremental del alta: cada dato se persiste en cuanto el cliente
+ * lo confirma. Regla RGPD: si el cliente aún no existe, el PRIMER dato que
+ * se guarda tiene que ser el consentimiento aceptado — sin él no se crea fila.
+ */
+export async function guardarDatoCliente(
   telefono: string,
-  nombre: string,
-  apellidos: string,
-  email: string | null,
-  consentimiento: boolean
-): Promise<Cliente> {
+  campos: {
+    consentimiento?: boolean;
+    nombre?: string;
+    apellidos?: string;
+    email?: string;
+    telefonoContacto?: string;
+  }
+): Promise<{ ok: boolean; error?: string; cliente?: Cliente }> {
+  const existente = await clientePorTelefono(telefono);
+
+  if (!existente) {
+    if (!campos.consentimiento) {
+      return { ok: false, error: "Primero debe aceptar la política de privacidad; sin eso no se guarda ningún dato" };
+    }
+    const { data, error } = await supabase
+      .from("clientes")
+      .insert({
+        telefono,
+        consentimiento_rgpd: true,
+        consentimiento_fecha: new Date().toISOString(),
+        nombre: campos.nombre ?? null,
+        apellidos: campos.apellidos ?? null,
+        email: campos.email ?? null,
+        telefono_contacto: campos.telefonoContacto ?? null,
+      })
+      .select("id, nombre, apellidos, email, consentimiento_rgpd")
+      .single();
+    if (error) throw error;
+    return { ok: true, cliente: data };
+  }
+
+  const cambios: Record<string, unknown> = {};
+  if (campos.consentimiento) {
+    cambios.consentimiento_rgpd = true;
+    cambios.consentimiento_fecha = new Date().toISOString();
+  }
+  if (campos.nombre !== undefined) cambios.nombre = campos.nombre;
+  if (campos.apellidos !== undefined) cambios.apellidos = campos.apellidos;
+  if (campos.email !== undefined) cambios.email = campos.email;
+  if (campos.telefonoContacto !== undefined) cambios.telefono_contacto = campos.telefonoContacto;
+  if (Object.keys(cambios).length === 0) return { ok: true, cliente: existente };
+
   const { data, error } = await supabase
     .from("clientes")
-    .upsert(
-      {
-        telefono,
-        nombre,
-        apellidos,
-        email,
-        consentimiento_rgpd: consentimiento,
-        consentimiento_fecha: consentimiento ? new Date().toISOString() : null,
-      },
-      { onConflict: "telefono" }
-    )
+    .update(cambios)
+    .eq("id", existente.id)
     .select("id, nombre, apellidos, email, consentimiento_rgpd")
     .single();
   if (error) throw error;
-  return data;
+  return { ok: true, cliente: data };
 }
 
 // ---------- Catálogo ----------
