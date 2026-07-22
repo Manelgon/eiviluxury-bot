@@ -44,7 +44,8 @@ create table if not exists eivi.tratamientos (
 -- Clientes (pacientes) con consentimiento RGPD
 create table if not exists eivi.clientes (
   id                    bigint generated always as identity primary key,
-  telefono              text not null unique,   -- 34612345678 sin '+'
+  telefono              text not null unique,   -- WhatsApp desde el que escribe, 34612345678 sin '+'
+  telefono_contacto     text,                   -- teléfono preferido si difiere del WhatsApp
   nombre                text,
   apellidos             text,
   email                 text,
