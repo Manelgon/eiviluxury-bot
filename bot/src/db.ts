@@ -187,9 +187,24 @@ export async function crearCita(
   hora: string,
   duracionMin: number,
   notas: string | null
-): Promise<{ ok: boolean; citaId?: number; conflicto?: boolean }> {
+): Promise<{ ok: boolean; citaId?: number; conflicto?: boolean; duplicadaMismoDia?: boolean }> {
   const inicio = madridAUtc(fecha, hora);
   const fin = sumarMin(inicio, duracionMin);
+
+  // Regla de negocio: se permiten varias citas el mismo día si son de
+  // tratamientos/áreas distintos, pero NO dos citas "de lo mismo" el mismo día
+  // (mismo tratamiento, o mismo médico si la cita no lleva tratamiento).
+  let dup = supabase
+    .from("citas")
+    .select("id")
+    .eq("cliente_id", clienteId)
+    .in("estado", ["pendiente", "confirmada"])
+    .gte("inicio", madridAUtc(fecha, "00:00").toISOString())
+    .lte("inicio", madridAUtc(fecha, "23:59").toISOString());
+  dup = tratamientoId !== null ? dup.eq("tratamiento_id", tratamientoId) : dup.eq("medico_id", medicoId);
+  const { data: repetidas, error: eDup } = await dup;
+  if (eDup) throw eDup;
+  if ((repetidas?.length ?? 0) > 0) return { ok: false, duplicadaMismoDia: true };
   const { data, error } = await supabase
     .from("citas")
     .insert({
