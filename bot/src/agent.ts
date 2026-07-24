@@ -245,7 +245,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-function systemPrompt(pushName: string | null, faq: string, primerMensajeDia: boolean): string {
+function systemPrompt(pushName: string | null, faq: string, primerMensajeDia: boolean, contextoPaciente: string): string {
   const hoy = new Date().toLocaleDateString("es-ES", {
     weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Europe/Madrid",
   });
@@ -257,6 +257,11 @@ function systemPrompt(pushName: string | null, faq: string, primerMensajeDia: bo
 HOY ES: ${hoy} (${hoyMadrid()}). HORA ACTUAL EN IBIZA: ${horaActual}.
 ${pushName ? `Nombre de WhatsApp de quien escribe: "${pushName}".` : ""}
 
+QUIÉN TE ESCRIBE (identificado YA por el sistema — es la verdad actual, no necesitas llamar a identificar_paciente para saludar):
+${contextoPaciente}
+
+⚠️ ESTAS INSTRUCCIONES MANDAN SOBRE EL HISTORIAL: si en la conversación anterior hay respuestas tuyas antiguas con otros formatos (menús, otro tono), IGNÓRALAS — responde siempre según las reglas de AHORA.
+
 ${primerMensajeDia
     ? "⚠️ ES EL PRIMER MENSAJE DE HOY DE ESTA PERSONA: empieza tu respuesta SIEMPRE con el saludo según la hora (Buenos días/Buenas tardes/Buenas noches), con su nombre si es paciente registrado, aunque ella no haya saludado. Después atiende lo que pida."
     : "Ya habéis hablado hoy: NO repitas el saludo completo, continúa la conversación con naturalidad."}
@@ -264,7 +269,7 @@ ${primerMensajeDia
 SALUDO INICIAL (aplícalo cuando corresponda según lo anterior):
 - Saluda según la HORA ACTUAL: "Buenos días" (hasta las 14:00), "Buenas tardes" (14:00–20:30), "Buenas noches" (después).
 - REGLA DE ORO CONVERSACIONAL: si el primer mensaje YA DICE lo que quiere ("hola, quiero una cita de medicina estética", "¿cuánto cuesta el láser?"), NO sueltes el menú de opciones: saluda en UNA frase según la hora ("Hola, buenas tardes 👋 soy Alexia, de *Clínica EiviLuxury*. ¡Claro!") y atiende DIRECTAMENTE su petición en ese mismo mensaje (ej.: proponle los médicos del área o los primeros huecos). El menú de opciones es SOLO para cuando saluda sin decir qué quiere.
-- Usa identificar_paciente ANTES de saludar para saber con quién hablas:
+- Los datos de QUIÉN TE ESCRIBE ya vienen arriba (identificados por el sistema); usa identificar_paciente solo para REFRESCARLOS tras un alta o un cambio de datos. Según esos datos:
   · Si ES paciente registrado: salúdalo por su nombre según la hora ("Buenos días, María 😊 soy Alexia, de *Clínica EiviLuxury*"). Si tiene citas próximas, menciónale la más cercana en el saludo ("veo que tienes cita el jueves 24 a las 10:00 con la Dra. Bufí") y ofrécele: información de tratamientos, reservar otra cita, o cambiar/cancelar/consultar sus citas. Si NO tiene ninguna cita, ofrece solo información y reservar — no menciones cambiar ni cancelar. Y si su primer mensaje ya pedía algo, atiéndelo directo tras el saludo, sin listar opciones.
   · Si NO está registrado Y su mensaje es solo un saludo, usa EXACTAMENTE esta estructura (adaptando el saludo a la hora y el idioma):
 "Hola, buenas tardes 👋 Soy Alexia, la asistente de *Clínica EiviLuxury*, tu clínica de medicina estética en Ibiza.
@@ -508,8 +513,25 @@ export async function responder(
 ): Promise<string> {
   const [hist, faq] = await Promise.all([historial(telefono, config.historyLimit), faqTexto()]);
 
+  // Identificación hecha por el SISTEMA (no depende de que el modelo llame a la tool):
+  // así el saludo y las reglas de médico de referencia siempre parten de datos reales.
+  let contextoPaciente = "NO REGISTRADO (no existe en la base de datos: el alta solo se inicia si quiere reservar).";
+  try {
+    const p = await pacientePorTelefono(telefono);
+    if (p) {
+      const [citas, asignados] = await Promise.all([
+        citasDePaciente(p.id).catch(() => []),
+        medicosAsignados(p.id).catch(() => []),
+      ]);
+      contextoPaciente = `REGISTRADO: ${JSON.stringify({ ...p, proximas_citas: citas, medicos_asignados: asignados })}`;
+    }
+  } catch (e) {
+    console.error("No se pudo pre-identificar al paciente:", e);
+    contextoPaciente = "NO COMPROBADO por un fallo interno: trátale con normalidad y NUNCA menciones problemas técnicos.";
+  }
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt(pushName, faq, primerMensajeDia) },
+    { role: "system", content: systemPrompt(pushName, faq, primerMensajeDia, contextoPaciente) },
     ...hist.map((m) => ({
       role: m.role === "user" ? ("user" as const) : ("assistant" as const),
       content: m.content,
