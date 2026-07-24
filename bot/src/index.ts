@@ -88,6 +88,8 @@ app.post("/webhook", (req, res) => {
 
 app.listen(config.port, () => {
   console.log(`✅ Bot EiviLuxury escuchando en puerto ${config.port}`);
+  // ⬇ Marca de versión: si tras un deploy NO ves esta línea con la versión esperada, Portainer corre una imagen vieja
+  console.log("🏷 build v2.1 — saludo directo · franjas mañana/tarde · tratamiento obligatorio · joins fixed · fallback pacientes_bot");
   console.log(`   Debounce: ${config.debounceMs} ms · Modelo: ${config.openaiModel}`);
   iniciarRecordatorios();
   void ingestarSiVacio();
