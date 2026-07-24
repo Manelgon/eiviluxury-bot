@@ -274,16 +274,24 @@ export async function apuntarListaEspera(
 
 // ---------- Agenda ----------
 
-/** Huecos libres de un médico en una fecha (respetando horario, citas y bloqueos). */
+/**
+ * Huecos libres de un médico en una fecha (respetando horario, citas,
+ * bloqueos y su ANTELACIÓN mínima de reserva).
+ * EMPAQUETADO COMPACTO: los huecos se proponen pegados — el primero
+ * arranca donde empieza el tramo (o donde acaba la cita anterior), y
+ * al chocar con una cita el siguiente arranca justo cuando esta termina.
+ * Así la agenda se llena sin ratos muertos aunque cada tratamiento
+ * dure distinto (60', 40', 30'...).
+ */
 export async function huecosDisponibles(medicoId: number, fecha: string, duracionMin: number) {
   const dow = diaSemana(fecha);
 
-  const [horarios, citas, bloqueos] = await Promise.all([
+  const [horarios, citas, bloqueos, ficha] = await Promise.all([
     supabase.from("horarios").select("hora_inicio, hora_fin").eq("medico_id", medicoId).eq("dia_semana", dow),
     supabase
       .from("citas")
       .select("inicio, fin")
-      .eq("medico_id", medicoId)
+      .or(`medico_id.eq.${medicoId},enfermera_id.eq.${medicoId}`) // también cuenta si está de apoyo
       .in("estado", ["pendiente", "confirmada"])
       .gte("fin", madridAUtc(fecha, "00:00").toISOString())
       .lte("inicio", madridAUtc(fecha, "23:59").toISOString()),
@@ -293,6 +301,7 @@ export async function huecosDisponibles(medicoId: number, fecha: string, duracio
       .eq("medico_id", medicoId)
       .gte("fin", madridAUtc(fecha, "00:00").toISOString())
       .lte("inicio", madridAUtc(fecha, "23:59").toISOString()),
+    supabase.from("medicos").select("antelacion_horas").eq("id", medicoId).maybeSingle(),
   ]);
   if (horarios.error) throw horarios.error;
   if (citas.error) throw citas.error;
@@ -301,23 +310,31 @@ export async function huecosDisponibles(medicoId: number, fecha: string, duracio
   const ocupado = [
     ...(citas.data ?? []).map((c) => ({ ini: new Date(c.inicio), fin: new Date(c.fin) })),
     ...(bloqueos.data ?? []).map((b) => ({ ini: new Date(b.inicio), fin: new Date(b.fin) })),
-  ];
-  const ahora = new Date();
+  ].sort((a, b) => a.ini.getTime() - b.ini.getTime());
+
+  // Antelación mínima del médico (freelancer): 0 = acepta huecos al momento
+  const antelacionHoras = (ficha.data as any)?.antelacion_horas ?? 0;
+  const minInicio = new Date(Date.now() + antelacionHoras * 3600_000);
   const huecos: string[] = [];
 
   for (const h of horarios.data ?? []) {
     const iniStr = String(h.hora_inicio).slice(0, 5);
     const finStr = String(h.hora_fin).slice(0, 5);
-    let slot = madridAUtc(fecha, iniStr);
     const finTramo = madridAUtc(fecha, finStr);
-    while (sumarMin(slot, duracionMin) <= finTramo) {
-      const slotFin = sumarMin(slot, duracionMin);
-      const pisado = ocupado.some((o) => slot < o.fin && slotFin > o.ini);
-      if (!pisado && slot > ahora) huecos.push(horaMadrid(slot));
-      slot = sumarMin(slot, duracionMin);
+    let cursor = madridAUtc(fecha, iniStr);
+    if (cursor < minInicio) cursor = minInicio; // no ofrecer antes de la antelación
+    while (sumarMin(cursor, duracionMin) <= finTramo) {
+      const slotFin = sumarMin(cursor, duracionMin);
+      const choque = ocupado.find((o) => cursor < o.fin && slotFin > o.ini);
+      if (choque) {
+        cursor = choque.fin > cursor ? new Date(choque.fin) : slotFin; // compacto: pegado al final de lo ocupado
+        continue;
+      }
+      huecos.push(horaMadrid(cursor));
+      cursor = slotFin; // el siguiente hueco, pegado al anterior
     }
   }
-  return huecos; // ["09:00","09:30",...]
+  return huecos; // ej. ["09:00","10:00","10:40",...] según duraciones reales
 }
 
 /**
@@ -390,6 +407,7 @@ export async function crearCita(
   const { data: repetidas, error: eDup } = await dup;
   if (eDup) throw eDup;
   if ((repetidas?.length ?? 0) > 0) return { ok: false, duplicadaMismoDia: true };
+  const { hoyMadrid: hoyM } = await import("./tiempo.js");
   const { data, error } = await supabase
     .from("citas")
     .insert({
@@ -399,6 +417,7 @@ export async function crearCita(
       inicio: inicio.toISOString(),
       fin: fin.toISOString(),
       notas,
+      reactiva: fecha === hoyM(), // ⚡ reserva de hoy para hoy → alerta a recepción
     })
     .select("id")
     .single();
@@ -471,6 +490,29 @@ export async function confirmarCita(citaId: number, pacienteId: number): Promise
     .select("id");
   if (error) throw error;
   return (data?.length ?? 0) > 0;
+}
+
+// ---------- Avisos proactivos (cola que llena el panel) ----------
+
+/** Avisos pendientes de enviar por WhatsApp (cancelaciones → lista de espera, reprogramaciones...). */
+export async function avisosPendientes() {
+  const { data, error } = await supabase
+    .from("avisos")
+    .select("id, telefono, mensaje, tipo")
+    .eq("estado", "pendiente")
+    .order("created_at")
+    .limit(20);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function marcarAviso(avisoId: number, estado: "enviado" | "fallido") {
+  const { error } = await supabase
+    .from("avisos")
+    .update({ estado, enviado_at: new Date().toISOString() })
+    .eq("id", avisoId);
+  if (error) console.error("marcarAviso:", error.message);
+  void auditarBot("bot.aviso." + estado, { tipo: "aviso", id: avisoId });
 }
 
 // ---------- Recordatorios ----------
