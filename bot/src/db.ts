@@ -147,25 +147,41 @@ export async function listarAreasConMedicos() {
     .eq("activo", true)
     .order("nombre");
   if (error) throw error;
-  return (data ?? []).map((a: any) => ({
-    id: a.id,
-    nombre: a.nombre,
-    descripcion: a.descripcion,
-    // Solo médicos: las enfermeras también pertenecen a áreas, pero el bot
-    // no ofrece citas con ellas (son apoyo, las asigna la clínica)
-    medicos: (a.medico_areas ?? [])
+  return (data ?? []).map((a: any) => {
+    // Solo médicos ACTIVOS: las enfermeras también pertenecen a áreas, pero el
+    // bot no ofrece citas con ellas (son apoyo), y un médico desactivado no existe para el bot
+    const medicos = (a.medico_areas ?? [])
       .map((ma: any) => ma.medicos)
       .filter((m: any) => m && m.activo && m.tipo !== "enfermera")
-      .map((m: any) => ({ id: m.id, nombre: m.nombre })),
-  }));
+      .map((m: any) => ({ id: m.id, nombre: m.nombre }));
+    return {
+      id: a.id,
+      nombre: a.nombre,
+      descripcion: a.descripcion,
+      medicos,
+      disponible: medicos.length > 0, // false = sin médico activo: "no disponible por ahora" + escalar
+    };
+  });
+}
+
+/** Áreas que tienen al menos un médico ACTIVO (para marcar disponibilidad de tratamientos). */
+async function areasConMedicoActivo(): Promise<Set<number>> {
+  const { data } = await supabase
+    .from("medico_areas")
+    .select("area_id, medicos!inner ( activo, tipo )")
+    .eq("medicos.activo", true)
+    .neq("medicos.tipo", "enfermera");
+  return new Set((data ?? []).map((x: any) => x.area_id));
 }
 
 export async function listarTratamientos(areaNombre?: string) {
-  let q = supabase
-    .from("tratamientos")
-    .select("id, nombre, descripcion, precio_eur, requiere_valoracion, duracion_min, areas ( nombre )")
-    .eq("activo", true);
-  const { data, error } = await q;
+  const [{ data, error }, disponibles] = await Promise.all([
+    supabase
+      .from("tratamientos")
+      .select("id, nombre, descripcion, precio_eur, requiere_valoracion, duracion_min, area_id, areas ( nombre )")
+      .eq("activo", true),
+    areasConMedicoActivo(),
+  ]);
   if (error) throw error;
   let lista = (data ?? []).map((t: any) => ({
     id: t.id,
@@ -175,6 +191,8 @@ export async function listarTratamientos(areaNombre?: string) {
     precio_eur: t.precio_eur,
     requiere_valoracion: t.requiere_valoracion,
     duracion_min: t.duracion_min,
+    // Sin médico activo en su área → no se puede reservar: "no disponible por ahora" + escalar
+    disponible: t.area_id === null ? true : disponibles.has(t.area_id),
   }));
   if (areaNombre) {
     const n = areaNombre.toLowerCase();

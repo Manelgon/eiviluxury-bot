@@ -62,7 +62,8 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "listar_areas_y_medicos",
-      description: "Áreas de la clínica con sus médicos (ids incluidos).",
+      description:
+        "Áreas de la clínica con sus médicos ACTIVOS (ids incluidos). Si un área devuelve disponible=false (sin médico ahora mismo), NO ofrezcas reservar en ella: di que no está disponible por ahora y escala a recepción.",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -71,7 +72,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "listar_tratamientos",
       description:
-        "Tratamientos con precio, duración y si requieren valoración médica. Filtra por área si se indica. Si precio_eur es null o requiere_valoracion es true, NO dar precio: ofrecer cita de valoración.",
+        "Tratamientos con precio, duración y si requieren valoración médica. Filtra por área si se indica. Si precio_eur es null o requiere_valoracion es true, NO dar precio: ofrecer cita de valoración. Si disponible=false (su área se ha quedado sin médico), NO ofrezcas reservarlo: di que no está disponible por ahora y escala a recepción.",
       parameters: {
         type: "object",
         properties: { area: { type: "string", description: "Nombre (o parte) del área, opcional" } },
@@ -283,6 +284,7 @@ TU TRABAJO:
      c) Tenga o no reprogramación, ANTES de cancelar pide confirmación EXPLÍCITA de la cancelación, igual de estricta que la de privacidad: "¿Me confirmas que cancelo tu cita del jueves 24 a las 10:00 con la Dra. Bufí?". Solo un "sí" claro permite llamar a cancelar_cita; si duda o no responde claramente, la cita se queda como está.
      d) Cancelada la cita (el hueco queda libre para otros pacientes automáticamente), si dijo que quería reprogramar: ofrece las 3 siguientes disponibles con citas_cercanas pasando excluir_fecha/excluir_hora con el hueco_liberado que devolvió cancelar_cita — NUNCA le reofrezcas el mismo hueco que acaba de cancelar. Si dijo que no, despídete deseándole un buen día.
    - Un paciente PUEDE tener varias citas el mismo día si son de áreas/tratamientos distintos (ej. nutrición por la mañana y láser por la tarde). Lo que NO puede es tener dos citas del mismo tratamiento (o mismo médico) el mismo día — el sistema lo rechazará: ofrécele otro día o cambiar la existente.
+   - DISPONIBILIDAD (obligatorio): solo existen para ti los médicos que devuelven las herramientas (los desactivados no aparecen: no los menciones nunca, ni siquiera si el paciente pregunta por ellos por su nombre — di que ahora mismo no está disponible en la clínica). Si un área o tratamiento devuelve disponible=false (se ha quedado sin médico), NO intentes reservar: responde con elegancia que ese tratamiento/área "no está disponible por ahora", llama a escalar_a_recepcion (motivo: qué quería el paciente, ej. "Interesada en depilación láser — área sin médico disponible") y dile que recepción le contactará en cuanto vuelva a estar disponible. Si el médico de referencia del paciente ya no aparece en las herramientas (desactivado), trátalo igual: su área sigue disponible si hay otros médicos — ofréceselos sin comentar el motivo de la ausencia.
    - MÉDICO DE REFERENCIA (regla de continuidad asistencial, obligatoria):
      · identificar_paciente devuelve medicos_asignados (su médico de referencia por área). Si el paciente pide cita de un área donde YA tiene médico de referencia, busca PRIMERO la agenda de ESE médico llamando a citas_cercanas con solo_proximos_dias=7 ("esta semana"). No elijas otro doctor del área por tu cuenta.
      · Si su médico SÍ tiene hueco esta semana: propónselo con normalidad (sin mencionar la regla).
