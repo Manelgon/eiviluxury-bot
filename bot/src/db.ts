@@ -137,7 +137,7 @@ export async function guardarDatoPaciente(
 export async function listarAreasConMedicos() {
   const { data, error } = await supabase
     .from("areas")
-    .select("id, nombre, descripcion, medico_areas ( medicos ( id, nombre, activo ) )")
+    .select("id, nombre, descripcion, medico_areas ( medicos ( id, nombre, activo, tipo ) )")
     .eq("activo", true)
     .order("nombre");
   if (error) throw error;
@@ -145,9 +145,11 @@ export async function listarAreasConMedicos() {
     id: a.id,
     nombre: a.nombre,
     descripcion: a.descripcion,
+    // Solo médicos: las enfermeras también pertenecen a áreas, pero el bot
+    // no ofrece citas con ellas (son apoyo, las asigna la clínica)
     medicos: (a.medico_areas ?? [])
       .map((ma: any) => ma.medicos)
-      .filter((m: any) => m && m.activo)
+      .filter((m: any) => m && m.activo && m.tipo !== "enfermera")
       .map((m: any) => ({ id: m.id, nombre: m.nombre })),
   }));
 }
