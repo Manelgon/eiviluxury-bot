@@ -95,6 +95,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           hora_preferida: { type: "string", description: "HH:MM si el paciente pidió una hora (opcional, requiere fecha)" },
           excluir_fecha: { type: "string", description: "YYYY-MM-DD de un hueco que NO se debe ofrecer (ej. el de una cita recién cancelada)" },
           excluir_hora: { type: "string", description: "HH:MM del hueco a excluir (junto con excluir_fecha)" },
+          tratamiento_id: { type: "integer", description: "Id del tratamiento elegido: la duración de búsqueda será la real de la tabla" },
           solo_proximos_dias: {
             type: "integer",
             description: "Limita la búsqueda a N días desde hoy. Pasa 7 al comprobar la agenda del médico de referencia del paciente (regla 'esta semana').",
@@ -295,6 +296,7 @@ TU TRABAJO:
      · Si no lo tiene claro o duda entre varios, ofrécele la cita de VALORACIÓN con el médico — esa es la vía correcta, no adivinar.
      La duración de la cita la fija el sistema según el tratamiento elegido.
    - FRANJAS: si el paciente pide "por las mañanas" o "por las tardes" (o "a primera hora"/"después de trabajar"), pasa franja=manana o franja=tarde en citas_cercanas y mantén esa preferencia en las siguientes búsquedas de la misma reserva. Si con esa franja no salen opciones, díselo y ofrece la otra franja u otro día.
+   - FECHAS Y DÍAS DE LA SEMANA: cada opción de citas_cercanas trae su campo "dia" (calculado por el sistema) y agendar_cita devuelve "cuando" — usa SIEMPRE esas etiquetas tal cual al hablar con el paciente. NUNCA calcules tú el día de la semana de una fecha: te equivocas.
    - LAS 3 OPCIONES NO SON TODA LA AGENDA: citas_cercanas solo devuelve las 3 más cercanas. Si el paciente pide "otro día", "más adelante" o un día concreto ("¿y el martes?"), calcula esa fecha con la referencia de HOY ES y vuelve a llamar a citas_cercanas con fecha_preferida en ese día (o en el día siguiente al último ofrecido si dijo "más adelante"). NUNCA respondas que el médico "solo tiene disponibilidad" en las fechas que ya ofreciste — búscalo antes.
    - Cambiar/cancelar/consultar citas: SOLO para pacientes registrados con alguna cita reservada (mis_citas). Un paciente con citas puede además reservar nuevas citas con normalidad.
    - FLUJO DE CANCELACIÓN (orden obligatorio):
@@ -374,9 +376,15 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
       case "listar_tratamientos":
         return JSON.stringify(await listarTratamientos(input.area ? String(input.area) : undefined));
       case "citas_cercanas": {
+        // Si se sabe el tratamiento, la duración de búsqueda es la REAL de la tabla
+        let durBusqueda = Number(input.duracion_min ?? 30);
+        if (input.tratamiento_id) {
+          const { duracionDeTratamiento } = await import("./db.js");
+          durBusqueda = (await duracionDeTratamiento(Number(input.tratamiento_id))) ?? durBusqueda;
+        }
         const opciones = await citasCercanas(
           Number(input.medico_id),
-          Number(input.duracion_min ?? 30),
+          durBusqueda,
           input.fecha_preferida ? String(input.fecha_preferida) : null,
           input.hora_preferida ? String(input.hora_preferida) : null,
           input.excluir_fecha && input.excluir_hora
@@ -393,7 +401,12 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
               "El médico no tiene hueco en ese plazo. Pregunta al paciente si quiere que mires la agenda de OTRO doctor del área, o si prefiere que le apuntes a la lista de espera de su médico (apuntar_lista_espera).",
           });
         }
-        return JSON.stringify({ opciones });
+        // Etiqueta del día calculada por el SERVIDOR: úsala tal cual (el modelo no calcula días de la semana)
+        const etiquetadas = opciones.map((o) => ({
+          ...o,
+          dia: new Date(`${o.fecha}T12:00:00Z`).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }),
+        }));
+        return JSON.stringify({ opciones: etiquetadas });
       }
       case "buscar_huecos": {
         const huecos = await huecosDisponibles(
@@ -408,6 +421,13 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
         if (!paciente) return JSON.stringify({ ok: false, error: "Paciente no registrado" });
         if (!paciente.consentimiento_rgpd)
           return JSON.stringify({ ok: false, error: "Falta aceptar la política de privacidad" });
+        // TRATAMIENTO OBLIGATORIO (regla estructural, no de prompt): sin él no hay reserva
+        if (!input.tratamiento_id)
+          return JSON.stringify({
+            ok: false,
+            error:
+              "Falta el tratamiento de la cita. Pregunta al paciente qué tratamiento quiere (usa listar_tratamientos del área y ofrécele elegir, o la cita de valoración si duda) y vuelve a llamar con tratamiento_id.",
+          });
         // Duración: si hay tratamiento, manda la de la tabla (no la que diga el modelo)
         const tratId = input.tratamiento_id ? Number(input.tratamiento_id) : null;
         let duracion = Number(input.duracion_min ?? 0) || 30;
@@ -415,6 +435,14 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
           const { duracionDeTratamiento } = await import("./db.js");
           duracion = (await duracionDeTratamiento(tratId)) ?? duracion;
         }
+        // VALIDACIÓN DURA: el hueco tiene que existir de verdad en la agenda del médico
+        // (mata reservas en días/horas inventados por el modelo, ej. un domingo sin horario)
+        const huecosReales = await huecosDisponibles(Number(input.medico_id), String(input.fecha), duracion);
+        if (!huecosReales.includes(String(input.hora)))
+          return JSON.stringify({
+            ok: false,
+            error: `El hueco ${input.fecha} ${input.hora} NO está disponible en la agenda real del médico (quizá el día no es el que crees). Vuelve a llamar a citas_cercanas y usa EXACTAMENTE una de las opciones que devuelva (campos fecha y hora tal cual).`,
+          });
         const r = await crearCita(
           paciente.id,
           Number(input.medico_id),
@@ -432,9 +460,13 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
             error:
               "El paciente ya tiene una cita de este mismo tratamiento/médico ese día. No se permiten dos citas de lo mismo el mismo día: ofrécele otro día, o cambiar la cita existente.",
           });
+        // Etiqueta de la cita calculada por el servidor: confírmala con ESTE texto, no calcules el día tú
+        const cuando = new Date(`${String(input.fecha)}T12:00:00Z`).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
         return JSON.stringify({
           ok: true,
           cita_id: r.citaId,
+          confirmada: true,
+          cuando: `${cuando} a las ${String(input.hora)}`,
           ...(r.nuevoMedicoReferencia
             ? {
                 nuevo_medico_referencia: r.nuevoMedicoReferencia,

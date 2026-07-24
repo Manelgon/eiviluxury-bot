@@ -474,6 +474,10 @@ export async function crearCita(
       inicio: inicio.toISOString(),
       fin: fin.toISOString(),
       notas,
+      // El paciente CONFIRMA explícitamente en el chat antes de reservar →
+      // la cita nace confirmada (lo pendiente es su FICHA, no la cita)
+      estado: "confirmada",
+      confirmada_paciente: true,
       reactiva: fecha === hoyM(), // ⚡ reserva de hoy para hoy → alerta a recepción
     })
     .select("id")
