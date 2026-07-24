@@ -85,7 +85,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "citas_cercanas",
       description:
-        "Las 3 citas disponibles MÁS CERCANAS de un médico. Es la herramienta por defecto para proponer citas. Sin preferencia: las 3 primeras desde hoy. Si el paciente pidió día y/u hora: pásalos y devuelve las 3 más próximas a esa hora (antes o después), completando con días siguientes si hace falta.",
+        "Las 3 citas disponibles MÁS CERCANAS de un médico. Es la herramienta por defecto para proponer citas. OJO: devuelve SOLO las 3 más próximas al punto de búsqueda — NO es toda la disponibilidad del médico; casi siempre hay más huecos en días posteriores. Si el paciente pide otro día ('¿y el martes?'), VUELVE a llamarla con fecha_preferida en ese día. Nunca digas que un médico 'solo tiene disponibilidad' en las fechas devueltas.",
       parameters: {
         type: "object",
         properties: {
@@ -98,6 +98,11 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           solo_proximos_dias: {
             type: "integer",
             description: "Limita la búsqueda a N días desde hoy. Pasa 7 al comprobar la agenda del médico de referencia del paciente (regla 'esta semana').",
+          },
+          franja: {
+            type: "string",
+            enum: ["manana", "tarde"],
+            description: "Si el paciente pide 'por las mañanas' (antes de las 14:00) o 'por las tardes' (desde las 14:00), pásalo y solo se devuelven huecos de esa franja.",
           },
         },
         required: ["medico_id"],
@@ -278,6 +283,8 @@ TU TRABAJO:
 2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al paciente y confirma médico + fecha + hora antes de reservar.
    - Al proponer cita, ofrece SIEMPRE 3 opciones concretas: las 3 disponibles más cercanas (citas_cercanas), en una mini-lista clara ("• jueves 24, 10:00 • jueves 24, 12:30 • viernes 25, 9:30").
    - Si el paciente pide un día y una hora concretos y ese hueco está libre, resérvalo directamente (confirmando antes). Si NO está libre, ofrécele las 3 más próximas a la hora pedida — antes o después — usando citas_cercanas con fecha_preferida y hora_preferida.
+   - FRANJAS: si el paciente pide "por las mañanas" o "por las tardes" (o "a primera hora"/"después de trabajar"), pasa franja=manana o franja=tarde en citas_cercanas y mantén esa preferencia en las siguientes búsquedas de la misma reserva. Si con esa franja no salen opciones, díselo y ofrece la otra franja u otro día.
+   - LAS 3 OPCIONES NO SON TODA LA AGENDA: citas_cercanas solo devuelve las 3 más cercanas. Si el paciente pide "otro día", "más adelante" o un día concreto ("¿y el martes?"), calcula esa fecha con la referencia de HOY ES y vuelve a llamar a citas_cercanas con fecha_preferida en ese día (o en el día siguiente al último ofrecido si dijo "más adelante"). NUNCA respondas que el médico "solo tiene disponibilidad" en las fechas que ya ofreciste — búscalo antes.
    - Cambiar/cancelar/consultar citas: SOLO para pacientes registrados con alguna cita reservada (mis_citas). Un paciente con citas puede además reservar nuevas citas con normalidad.
    - FLUJO DE CANCELACIÓN (orden obligatorio):
      a) Si el paciente tiene VARIAS citas y no especificó cuál, muéstrale cada una (fecha, hora, médico, tratamiento) y pregunta cuál quiere cancelar o reprogramar.
@@ -364,7 +371,8 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
           input.excluir_fecha && input.excluir_hora
             ? { fecha: String(input.excluir_fecha), hora: String(input.excluir_hora) }
             : null,
-          input.solo_proximos_dias ? Number(input.solo_proximos_dias) : 21
+          input.solo_proximos_dias ? Number(input.solo_proximos_dias) : 21,
+          input.franja === "manana" || input.franja === "tarde" ? input.franja : null
         );
         if (opciones.length === 0 && input.solo_proximos_dias) {
           return JSON.stringify({

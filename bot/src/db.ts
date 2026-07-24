@@ -380,7 +380,8 @@ export async function citasCercanas(
   fechaPref: string | null,
   horaPref: string | null,
   excluir: { fecha: string; hora: string } | null = null,
-  maxDias = 21 // ventana de búsqueda; 7 = "esta semana" (prioridad del médico de referencia)
+  maxDias = 21, // ventana de búsqueda; 7 = "esta semana" (prioridad del médico de referencia)
+  franja: "manana" | "tarde" | null = null // "por las mañanas" (<14:00) / "por las tardes" (≥14:00)
 ): Promise<{ fecha: string; hora: string }[]> {
   const { hoyMadrid, sumarDias } = await import("./tiempo.js");
   const base = fechaPref ?? hoyMadrid();
@@ -391,6 +392,8 @@ export async function citasCercanas(
     const huecos = await huecosDisponibles(medicoId, fecha, duracionMin);
     for (const hora of huecos) {
       if (excluir && excluir.fecha === fecha && excluir.hora === hora) continue; // no reofrecer el hueco recién cancelado
+      if (franja === "manana" && hora >= "14:00") continue;
+      if (franja === "tarde" && hora < "14:00") continue;
       todos.push({ fecha, hora });
     }
     // Sin hora preferida basta con las 3 primeras; con hora preferida
