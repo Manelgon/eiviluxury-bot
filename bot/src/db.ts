@@ -25,14 +25,31 @@ export interface Paciente {
  * ni fecha de nacimiento, ni nada clínico. Eso es de recepción y médicos.
  */
 export async function pacientePorTelefono(telefono: string): Promise<Paciente | null> {
+  const COLUMNAS_CONTACTO = "id, nombre, apellidos, email, consentimiento_rgpd, alta_completa";
   const { data, error } = await supabase
     .from("pacientes_bot")
-    .select("id, nombre, apellidos, email, consentimiento_rgpd, alta_completa")
+    .select(COLUMNAS_CONTACTO)
     .eq("telefono", telefono)
     .eq("activo", true)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    // Salvavidas: si la vista no existe (PGRST205), caer a la tabla con LAS MISMAS
+    // columnas de contacto (la minimización se mantiene) y avisar a gritos en el log.
+    if ((error as any).code === "PGRST205") {
+      console.error("⚠⚠ FALTA LA VISTA eivi.pacientes_bot (ejecutar patch 19). Usando fallback restringido a columnas de contacto.");
+      const fb = await supabase
+        .from("pacientes")
+        .select(COLUMNAS_CONTACTO)
+        .eq("telefono", telefono)
+        .eq("activo", true)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (fb.error) throw fb.error;
+      return fb.data;
+    }
+    throw error;
+  }
   return data;
 }
 
