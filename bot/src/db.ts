@@ -120,6 +120,12 @@ export async function guardarDatoPaciente(
       "Acepto la política de privacidad y el tratamiento de mis datos personales para la gestión de citas (aceptado por WhatsApp)");
     void registrarConsentimiento(data.id, "comunicaciones_recordatorios", true,
       "Acepto recibir recordatorios y comunicaciones operativas de mis citas por WhatsApp");
+    if (campos.publicidad !== undefined) {
+      void registrarConsentimiento(data.id, "publicidad", campos.publicidad,
+        campos.publicidad
+          ? "Acepto recibir novedades y promociones de Clínica EiviLuxury por WhatsApp"
+          : "Rechazo recibir publicidad (registrado por WhatsApp)");
+    }
     void auditarBot("bot.paciente.crear", { tipo: "paciente", id: data.id, label: telefono });
     return { ok: true, paciente: data };
   }
