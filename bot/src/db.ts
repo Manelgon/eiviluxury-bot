@@ -16,12 +16,18 @@ export interface Paciente {
   apellidos: string | null;
   email: string | null;
   consentimiento_rgpd: boolean;
+  alta_completa?: boolean;
 }
 
+/**
+ * REGLA DE ORO: el bot lee al paciente SOLO por la vista `pacientes_bot`
+ * (contacto y comercial). Jamás la tabla completa: ni DNI, ni dirección,
+ * ni fecha de nacimiento, ni nada clínico. Eso es de recepción y médicos.
+ */
 export async function pacientePorTelefono(telefono: string): Promise<Paciente | null> {
   const { data, error } = await supabase
-    .from("pacientes")
-    .select("id, nombre, apellidos, email, consentimiento_rgpd")
+    .from("pacientes_bot")
+    .select("id, nombre, apellidos, email, consentimiento_rgpd, alta_completa")
     .eq("telefono", telefono)
     .eq("activo", true)
     .is("deleted_at", null)
