@@ -24,9 +24,36 @@ export async function clientePorTelefono(telefono: string): Promise<Cliente | nu
     .select("id, nombre, apellidos, email, consentimiento_rgpd")
     .eq("telefono", telefono)
     .eq("activo", true)
+    .is("deleted_at", null)
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+/** Auditoría RGPD del bot (never-fail). REGLA: toda acción nueva del bot debe registrarse aquí. */
+export async function auditarBot(accion: string, recurso: { tipo?: string; id?: number | string; label?: string }, metadata?: Record<string, unknown>) {
+  try {
+    await supabase.from("audit_logs").insert({
+      actor_id: null,
+      actor_email: "alexia@bot",
+      accion,
+      recurso_tipo: recurso.tipo ?? null,
+      recurso_id: recurso.id !== undefined ? String(recurso.id) : null,
+      recurso_label: recurso.label ?? null,
+      metadata: metadata ?? null,
+    });
+  } catch (e) {
+    console.error("auditarBot falló:", e);
+  }
+}
+
+/** Registra un consentimiento granular (huella RGPD). */
+export async function registrarConsentimiento(clienteId: number, tipo: string, aceptado: boolean, texto: string) {
+  const { error } = await supabase.from("consentimientos").insert({
+    cliente_id: clienteId, tipo, aceptado, texto, canal: "whatsapp",
+  });
+  if (error) console.error("Error registrando consentimiento:", error.message);
+  void auditarBot("bot.consentimiento.registrar", { tipo: "cliente", id: clienteId }, { tipo_consentimiento: tipo, aceptado });
 }
 
 /**
@@ -42,6 +69,7 @@ export async function guardarDatoCliente(
     apellidos?: string;
     email?: string;
     telefonoContacto?: string;
+    publicidad?: boolean;
   }
 ): Promise<{ ok: boolean; error?: string; cliente?: Cliente }> {
   const existente = await clientePorTelefono(telefono);
@@ -64,13 +92,29 @@ export async function guardarDatoCliente(
       .select("id, nombre, apellidos, email, consentimiento_rgpd")
       .single();
     if (error) throw error;
+    // Huella RGPD granular: al aceptar la política se registran las finalidades base
+    void registrarConsentimiento(data.id, "datos_personales", true,
+      "Acepto la política de privacidad y el tratamiento de mis datos personales para la gestión de citas (aceptado por WhatsApp)");
+    void registrarConsentimiento(data.id, "comunicaciones_recordatorios", true,
+      "Acepto recibir recordatorios y comunicaciones operativas de mis citas por WhatsApp");
+    void auditarBot("bot.cliente.crear", { tipo: "cliente", id: data.id, label: telefono });
     return { ok: true, cliente: data };
   }
 
   const cambios: Record<string, unknown> = {};
-  if (campos.consentimiento) {
+  if (campos.consentimiento && !existente.consentimiento_rgpd) {
     cambios.consentimiento_rgpd = true;
     cambios.consentimiento_fecha = new Date().toISOString();
+    void registrarConsentimiento(existente.id, "datos_personales", true,
+      "Acepto la política de privacidad y el tratamiento de mis datos personales para la gestión de citas (aceptado por WhatsApp)");
+    void registrarConsentimiento(existente.id, "comunicaciones_recordatorios", true,
+      "Acepto recibir recordatorios y comunicaciones operativas de mis citas por WhatsApp");
+  }
+  if (campos.publicidad !== undefined) {
+    void registrarConsentimiento(existente.id, "publicidad", campos.publicidad,
+      campos.publicidad
+        ? "Acepto recibir novedades y promociones de Clínica EiviLuxury por WhatsApp"
+        : "Rechazo recibir publicidad (registrado por WhatsApp)");
   }
   if (campos.nombre !== undefined) cambios.nombre = campos.nombre;
   if (campos.apellidos !== undefined) cambios.apellidos = campos.apellidos;
@@ -264,6 +308,7 @@ export async function crearCita(
     if (error.code === "23P01") return { ok: false, conflicto: true }; // solapamiento
     throw error;
   }
+  void auditarBot("bot.cita.crear", { tipo: "cita", id: data.id }, { cliente_id: clienteId, medico_id: medicoId, fecha, hora });
   return { ok: true, citaId: data.id };
 }
 
@@ -308,6 +353,7 @@ export async function cancelarCita(
   const fila = data?.[0];
   if (!fila) return { ok: false };
   const inicio = new Date(fila.inicio);
+  void auditarBot("bot.cita.cancelar", { tipo: "cita", id: citaId }, { cliente_id: clienteId });
   return {
     ok: true,
     hueco_liberado: { fecha: fechaMadrid(inicio), hora: hMad(inicio), medico_id: fila.medico_id },

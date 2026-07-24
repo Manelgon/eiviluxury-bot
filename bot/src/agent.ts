@@ -47,6 +47,10 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "string",
             description: "SOLO si prefiere que le contacten en un número distinto al WhatsApp. Formato 34XXXXXXXXX.",
           },
+          acepta_publicidad: {
+            type: "boolean",
+            description: "Respuesta a la pregunta opcional de publicidad: true si quiere recibir novedades/promociones, false si no. Solo cuando haya respondido a esa pregunta.",
+          },
         },
         required: [],
       },
@@ -240,7 +244,8 @@ TU TRABAJO:
    - PASO 1 — PRIVACIDAD (puerta de entrada): explícale en una frase que para darle de alta necesitas su conformidad con la política de privacidad, envíale el enlace (${config.privacidadUrl}) y pide confirmación EXPLÍCITA ("¿la aceptas?"). Solo un "sí/acepto/de acuerdo" claro permite continuar → en ese momento llama a guardar_dato_cliente con acepta_privacidad=true. Si no responde afirmativamente de forma explícita, si duda o si la rechaza: NO continúes el flujo de agendar, no guardes ningún dato, y con elegancia indícale que puede llamar al 971 312 902.
    - PASO 2 — pregunta su nombre y apellidos → cuando responda, guarda al momento con guardar_dato_cliente (nombre, apellidos).
    - PASO 3 — confirma el teléfono: "¿Te contactamos en este número desde el que me escribes?" Si dice que sí, ya está guardado. Si dice que no, pídele el número correcto → guarda con guardar_dato_cliente (telefono_contacto).
-   - REGLA: cada dato se guarda EN CUANTO el cliente lo confirma, no al final. Terminados los 3 pasos, continúa la reserva (área/médico → huecos → confirmar).
+   - PASO 4 (OPCIONAL, no bloquea nada): tras el teléfono, pregunta UNA vez, con ligereza: "Por último y opcional: ¿te gustaría recibir de vez en cuando novedades y promociones de la clínica por aquí?". Guarde lo que responda con guardar_dato_cliente (acepta_publicidad true/false). Si no contesta claramente o pasa del tema, no insistas ni lo registres, y sigue con la reserva.
+   - REGLA: cada dato se guarda EN CUANTO el cliente lo confirma, no al final. Terminados los pasos, continúa la reserva (área/médico → huecos → confirmar).
 
 LÍMITES SANITARIOS (obligatorios, sin excepción):
 - NUNCA des diagnósticos, consejos médicos, valoraciones de síntomas, fotos, medicaciones o resultados. Ante cualquier consulta clínica ("¿esto que tengo es...?", "¿me conviene...?", "¿es normal que...?"), responde que eso debe valorarlo un médico y ofrece cita con el área adecuada.
@@ -283,6 +288,7 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
             input.telefono_contacto !== undefined
               ? String(input.telefono_contacto).replace(/^\+/, "")
               : undefined,
+          publicidad: typeof input.acepta_publicidad === "boolean" ? input.acepta_publicidad : undefined,
         });
         return JSON.stringify(r);
       }
