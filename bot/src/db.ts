@@ -137,7 +137,7 @@ export async function guardarDatoPaciente(
 export async function listarAreasConMedicos() {
   const { data, error } = await supabase
     .from("areas")
-    .select("id, nombre, descripcion, medico_areas ( medicos ( id, nombre, especialidad, activo ) )")
+    .select("id, nombre, descripcion, medico_areas ( medicos ( id, nombre, activo ) )")
     .eq("activo", true)
     .order("nombre");
   if (error) throw error;
@@ -148,7 +148,7 @@ export async function listarAreasConMedicos() {
     medicos: (a.medico_areas ?? [])
       .map((ma: any) => ma.medicos)
       .filter((m: any) => m && m.activo)
-      .map((m: any) => ({ id: m.id, nombre: m.nombre, especialidad: m.especialidad })),
+      .map((m: any) => ({ id: m.id, nombre: m.nombre })),
   }));
 }
 
@@ -173,6 +173,103 @@ export async function listarTratamientos(areaNombre?: string) {
     lista = lista.filter((t) => (t.area ?? "").toLowerCase().includes(n));
   }
   return lista;
+}
+
+// ---------- Médico de referencia por área ----------
+
+/** Médicos asignados (de referencia) del paciente, por área. */
+export async function medicosAsignados(pacienteId: number) {
+  const { data, error } = await supabase
+    .from("paciente_medico_area")
+    .select("medico_id, area_id, medicos ( nombre ), areas ( nombre )")
+    .eq("paciente_id", pacienteId)
+    .eq("activo", true);
+  if (error) throw error;
+  return (data ?? []).map((a: any) => ({
+    medico_id: a.medico_id,
+    medico: a.medicos?.nombre ?? null,
+    area_id: a.area_id,
+    area: a.areas?.nombre ?? null,
+  }));
+}
+
+/**
+ * Al confirmarse una cita: si el paciente aún no tiene médico de referencia
+ * en el área de esa cita, el médico de la cita queda asignado.
+ * El área se deduce del tratamiento; si la cita no lleva tratamiento, del
+ * médico SOLO si pertenece a una única área (si tiene varias, no se adivina).
+ */
+async function asegurarMedicoDeReferencia(
+  pacienteId: number,
+  medicoId: number,
+  tratamientoId: number | null
+): Promise<{ area: string; medico: string } | null> {
+  try {
+    let areaId: number | null = null;
+    if (tratamientoId !== null) {
+      const { data } = await supabase.from("tratamientos").select("area_id").eq("id", tratamientoId).maybeSingle();
+      areaId = data?.area_id ?? null;
+    }
+    if (areaId === null) {
+      const { data } = await supabase.from("medico_areas").select("area_id").eq("medico_id", medicoId);
+      if ((data?.length ?? 0) === 1) areaId = data![0].area_id;
+    }
+    if (areaId === null) return null;
+
+    // ¿El médico pertenece a ese área? (la FK compuesta lo exige)
+    const { data: pertenece } = await supabase
+      .from("medico_areas").select("area_id").eq("medico_id", medicoId).eq("area_id", areaId).maybeSingle();
+    if (!pertenece) return null;
+
+    // ¿Ya hay médico de referencia activo en el área?
+    const { data: ya } = await supabase
+      .from("paciente_medico_area").select("id")
+      .eq("paciente_id", pacienteId).eq("area_id", areaId).eq("activo", true).limit(1);
+    if ((ya?.length ?? 0) > 0) return null;
+
+    const { error } = await supabase
+      .from("paciente_medico_area")
+      .insert({ paciente_id: pacienteId, medico_id: medicoId, area_id: areaId });
+    if (error) return null; // carrera con otra asignación: no pasa nada
+
+    const [{ data: m }, { data: a }] = await Promise.all([
+      supabase.from("medicos").select("nombre").eq("id", medicoId).maybeSingle(),
+      supabase.from("areas").select("nombre").eq("id", areaId).maybeSingle(),
+    ]);
+    void auditarBot("bot.asignacion.crear", { tipo: "asignacion", label: `paciente ${pacienteId}` },
+      { paciente_id: pacienteId, medico_id: medicoId, area_id: areaId, origen: "cita" });
+    return { area: a?.nombre ?? `área ${areaId}`, medico: m?.nombre ?? `médico ${medicoId}` };
+  } catch (e) {
+    console.error("asegurarMedicoDeReferencia falló:", e);
+    return null;
+  }
+}
+
+// ---------- Lista de espera ----------
+
+/** Apunta al paciente a la lista de espera de un área (única entrada pendiente por área). */
+export async function apuntarListaEspera(
+  pacienteId: number,
+  areaId: number,
+  medicoId: number | null,
+  tratamientoId: number | null,
+  preferencia: string | null
+): Promise<{ ok: boolean; ya_apuntado?: boolean }> {
+  const { error } = await supabase.from("lista_espera").insert({
+    paciente_id: pacienteId,
+    area_id: areaId,
+    medico_id: medicoId,
+    tratamiento_id: tratamientoId,
+    preferencia,
+    creada_via: "bot",
+  });
+  if (error) {
+    if (error.code === "23505") return { ok: true, ya_apuntado: true }; // ya estaba pendiente en ese área
+    throw error;
+  }
+  void auditarBot("bot.lista_espera.crear", { tipo: "lista_espera", label: `paciente ${pacienteId}` },
+    { paciente_id: pacienteId, area_id: areaId, medico_id: medicoId, preferencia });
+  return { ok: true };
 }
 
 // ---------- Agenda ----------
@@ -234,13 +331,14 @@ export async function citasCercanas(
   duracionMin: number,
   fechaPref: string | null,
   horaPref: string | null,
-  excluir: { fecha: string; hora: string } | null = null
+  excluir: { fecha: string; hora: string } | null = null,
+  maxDias = 21 // ventana de búsqueda; 7 = "esta semana" (prioridad del médico de referencia)
 ): Promise<{ fecha: string; hora: string }[]> {
   const { hoyMadrid, sumarDias } = await import("./tiempo.js");
   const base = fechaPref ?? hoyMadrid();
   const todos: { fecha: string; hora: string }[] = [];
 
-  for (let d = 0; d < 21; d++) {
+  for (let d = 0; d < maxDias; d++) {
     const fecha = sumarDias(base, d);
     const huecos = await huecosDisponibles(medicoId, fecha, duracionMin);
     for (const hora of huecos) {
@@ -274,7 +372,7 @@ export async function crearCita(
   hora: string,
   duracionMin: number,
   notas: string | null
-): Promise<{ ok: boolean; citaId?: number; conflicto?: boolean; duplicadaMismoDia?: boolean }> {
+): Promise<{ ok: boolean; citaId?: number; conflicto?: boolean; duplicadaMismoDia?: boolean; nuevoMedicoReferencia?: { area: string; medico: string } }> {
   const inicio = madridAUtc(fecha, hora);
   const fin = sumarMin(inicio, duracionMin);
 
@@ -309,7 +407,9 @@ export async function crearCita(
     throw error;
   }
   void auditarBot("bot.cita.crear", { tipo: "cita", id: data.id }, { paciente_id: pacienteId, medico_id: medicoId, fecha, hora });
-  return { ok: true, citaId: data.id };
+  // Si el paciente no tenía médico de referencia en este área, el de la cita queda asignado
+  const asignado = await asegurarMedicoDeReferencia(pacienteId, medicoId, tratamientoId);
+  return { ok: true, citaId: data.id, nuevoMedicoReferencia: asignado ?? undefined };
 }
 
 export async function citasDePaciente(pacienteId: number) {

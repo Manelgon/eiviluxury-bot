@@ -16,6 +16,8 @@ import {
   escalarARecepcion,
   historial,
   faqTexto,
+  medicosAsignados,
+  apuntarListaEspera,
 } from "./db.js";
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
@@ -26,7 +28,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "identificar_paciente",
       description:
-        "Devuelve los datos del paciente que escribe (por su teléfono) y sus próximas citas. Úsala SIEMPRE al empezar a gestionar cualquier cita o dato personal.",
+        "Devuelve los datos del paciente que escribe (por su teléfono), sus próximas citas y sus médicos de referencia por área (medicos_asignados). Úsala SIEMPRE al empezar a gestionar cualquier cita o dato personal.",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -92,8 +94,30 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           hora_preferida: { type: "string", description: "HH:MM si el paciente pidió una hora (opcional, requiere fecha)" },
           excluir_fecha: { type: "string", description: "YYYY-MM-DD de un hueco que NO se debe ofrecer (ej. el de una cita recién cancelada)" },
           excluir_hora: { type: "string", description: "HH:MM del hueco a excluir (junto con excluir_fecha)" },
+          solo_proximos_dias: {
+            type: "integer",
+            description: "Limita la búsqueda a N días desde hoy. Pasa 7 al comprobar la agenda del médico de referencia del paciente (regla 'esta semana').",
+          },
         },
         required: ["medico_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apuntar_lista_espera",
+      description:
+        "Apunta al paciente a la lista de espera de un área, con su médico preferido. Úsala SOLO cuando su médico de referencia no tenga hueco esta semana Y el paciente elija esperar (en vez de otro doctor). El médico gestionará la lista y la clínica le contactará.",
+      parameters: {
+        type: "object",
+        properties: {
+          area_id: { type: "integer" },
+          medico_id: { type: "integer", description: "El médico de referencia por el que espera (opcional)" },
+          tratamiento_id: { type: "integer", description: "Opcional" },
+          preferencia: { type: "string", description: "Preferencia del paciente con sus palabras: 'cuanto antes', 'por las mañanas', 'a partir del día 20'..." },
+        },
+        required: ["area_id"],
       },
     },
   },
@@ -259,6 +283,12 @@ TU TRABAJO:
      c) Tenga o no reprogramación, ANTES de cancelar pide confirmación EXPLÍCITA de la cancelación, igual de estricta que la de privacidad: "¿Me confirmas que cancelo tu cita del jueves 24 a las 10:00 con la Dra. Bufí?". Solo un "sí" claro permite llamar a cancelar_cita; si duda o no responde claramente, la cita se queda como está.
      d) Cancelada la cita (el hueco queda libre para otros pacientes automáticamente), si dijo que quería reprogramar: ofrece las 3 siguientes disponibles con citas_cercanas pasando excluir_fecha/excluir_hora con el hueco_liberado que devolvió cancelar_cita — NUNCA le reofrezcas el mismo hueco que acaba de cancelar. Si dijo que no, despídete deseándole un buen día.
    - Un paciente PUEDE tener varias citas el mismo día si son de áreas/tratamientos distintos (ej. nutrición por la mañana y láser por la tarde). Lo que NO puede es tener dos citas del mismo tratamiento (o mismo médico) el mismo día — el sistema lo rechazará: ofrécele otro día o cambiar la existente.
+   - MÉDICO DE REFERENCIA (regla de continuidad asistencial, obligatoria):
+     · identificar_paciente devuelve medicos_asignados (su médico de referencia por área). Si el paciente pide cita de un área donde YA tiene médico de referencia, busca PRIMERO la agenda de ESE médico llamando a citas_cercanas con solo_proximos_dias=7 ("esta semana"). No elijas otro doctor del área por tu cuenta.
+     · Si su médico SÍ tiene hueco esta semana: propónselo con normalidad (sin mencionar la regla).
+     · Si su médico NO tiene hueco esta semana (la herramienta devuelve sin_hueco_en_dias): díselo y pregúntale UNA cosa: ¿quiere que mires si hay hueco con otro doctor del área, o prefiere que le apunte a la lista de espera de su médico? Según responda: otro doctor → citas_cercanas normal con el otro médico; lista de espera → apuntar_lista_espera con area_id, su medico_id de referencia y su preferencia si la dijo. Tras apuntarle, confirma que su médico revisará la lista y la clínica le avisará en cuanto haya hueco.
+     · Si el paciente pide EXPLÍCITAMENTE otro médico distinto a su referencia, respétalo sin discutir (la cita con otro médico no cambia su médico de referencia).
+     · Si NO tiene médico de referencia en ese área (paciente nuevo o área nueva para él), flujo normal: ofrécele los médicos del área y, al confirmarse la cita, ese médico quedará como su referencia (agendar_cita te lo devuelve en nuevo_medico_referencia: menciónalo en una frase natural, ej. "La Dra. Bufí queda como tu doctora de referencia en medicina estética 😊").
 3. Alta de nuevos pacientes — SOLO como parte de reservar una cita, nunca como opción suelta. NUNCA ofrezcas "registrarte" como servicio: a quien no es paciente dale información libremente sin pedirle datos. El alta empieza únicamente cuando quiere AGENDAR y identificar_paciente indica que no está registrado (o sin consentimiento). El ORDEN del alta es OBLIGATORIO, un paso por mensaje:
    - PASO 1 — PRIVACIDAD (puerta de entrada): explícale en una frase que para darle de alta necesitas su conformidad con la política de privacidad, envíale el enlace (${config.privacidadUrl}) y pide confirmación EXPLÍCITA ("¿la aceptas?"). Solo un "sí/acepto/de acuerdo" claro permite continuar → en ese momento llama a guardar_dato_paciente con acepta_privacidad=true. Si no responde afirmativamente de forma explícita, si duda o si la rechaza: NO continúes el flujo de agendar, no guardes ningún dato, y con elegancia indícale que puede llamar al 971 312 902.
    - PASO 2 — pregunta su nombre y apellidos → cuando responda, guarda al momento con guardar_dato_paciente (nombre, apellidos).
@@ -295,8 +325,11 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
       case "identificar_paciente": {
         const paciente = await pacientePorTelefono(telefono);
         if (!paciente) return JSON.stringify({ registrado: false });
-        const citas = await citasDePaciente(paciente.id);
-        return JSON.stringify({ registrado: true, paciente, proximas_citas: citas });
+        const [citas, asignados] = await Promise.all([
+          citasDePaciente(paciente.id),
+          medicosAsignados(paciente.id).catch(() => []),
+        ]);
+        return JSON.stringify({ registrado: true, paciente, proximas_citas: citas, medicos_asignados: asignados });
       }
       case "guardar_dato_paciente": {
         const r = await guardarDatoPaciente(telefono, {
@@ -324,8 +357,17 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
           input.hora_preferida ? String(input.hora_preferida) : null,
           input.excluir_fecha && input.excluir_hora
             ? { fecha: String(input.excluir_fecha), hora: String(input.excluir_hora) }
-            : null
+            : null,
+          input.solo_proximos_dias ? Number(input.solo_proximos_dias) : 21
         );
+        if (opciones.length === 0 && input.solo_proximos_dias) {
+          return JSON.stringify({
+            opciones: [],
+            sin_hueco_en_dias: Number(input.solo_proximos_dias),
+            siguiente_paso:
+              "El médico no tiene hueco en ese plazo. Pregunta al paciente si quiere que mires la agenda de OTRO doctor del área, o si prefiere que le apuntes a la lista de espera de su médico (apuntar_lista_espera).",
+          });
+        }
         return JSON.stringify({ opciones });
       }
       case "buscar_huecos": {
@@ -358,7 +400,32 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
             error:
               "El paciente ya tiene una cita de este mismo tratamiento/médico ese día. No se permiten dos citas de lo mismo el mismo día: ofrécele otro día, o cambiar la cita existente.",
           });
-        return JSON.stringify({ ok: true, cita_id: r.citaId });
+        return JSON.stringify({
+          ok: true,
+          cita_id: r.citaId,
+          ...(r.nuevoMedicoReferencia
+            ? {
+                nuevo_medico_referencia: r.nuevoMedicoReferencia,
+                nota: "Este médico queda como su médico de referencia para este área: menciónalo con naturalidad al confirmar la cita.",
+              }
+            : {}),
+        });
+      }
+      case "apuntar_lista_espera": {
+        const paciente = await pacientePorTelefono(telefono);
+        if (!paciente) return JSON.stringify({ ok: false, error: "Paciente no registrado" });
+        const r = await apuntarListaEspera(
+          paciente.id,
+          Number(input.area_id),
+          input.medico_id ? Number(input.medico_id) : null,
+          input.tratamiento_id ? Number(input.tratamiento_id) : null,
+          input.preferencia ? String(input.preferencia) : null
+        );
+        return JSON.stringify(
+          r.ya_apuntado
+            ? { ok: true, ya_apuntado: true, nota: "Ya estaba en la lista de espera de ese área: díselo con naturalidad, no se duplica." }
+            : { ok: true, nota: "Apuntado. Confírmale que su médico revisará la lista y la clínica le contactará en cuanto haya hueco." }
+        );
       }
       case "mis_citas": {
         const paciente = await pacientePorTelefono(telefono);
