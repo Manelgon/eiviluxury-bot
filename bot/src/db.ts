@@ -465,7 +465,7 @@ export async function crearCita(
 export async function citasDePaciente(pacienteId: number) {
   const { data, error } = await supabase
     .from("citas")
-    .select("id, inicio, estado, confirmada_paciente, medicos ( nombre ), tratamientos ( nombre )")
+    .select("id, inicio, estado, confirmada_paciente, medicos!citas_medico_id_fkey ( nombre ), tratamientos ( nombre )")
     .eq("paciente_id", pacienteId)
     .in("estado", ["pendiente", "confirmada"])
     .gte("inicio", new Date().toISOString())
@@ -553,7 +553,7 @@ export async function citasParaRecordar(horasAntes: number) {
   const hasta = new Date(Date.now() + (horasAntes + 0.5) * 3600_000);
   const { data, error } = await supabase
     .from("citas")
-    .select("id, inicio, pacientes ( id, telefono, nombre ), medicos ( nombre ), tratamientos ( nombre )")
+    .select("id, inicio, pacientes ( id, telefono, nombre ), medicos!citas_medico_id_fkey ( nombre ), tratamientos ( nombre )")
     .in("estado", ["pendiente", "confirmada"])
     .eq("recordatorio_enviado", false)
     .gte("inicio", desde.toISOString())
