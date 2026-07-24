@@ -148,7 +148,7 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "agendar_cita",
       description:
-        "Reserva una cita. Requiere paciente registrado con consentimiento aceptado. Confirmar antes con el paciente: médico, fecha y hora exacta (de buscar_huecos).",
+        "Reserva una cita. Requiere paciente registrado con consentimiento aceptado. Confirmar antes con el paciente: médico, fecha y hora exacta (de buscar_huecos). PASA SIEMPRE tratamiento_id si el paciente dijo qué quiere (id de listar_tratamientos): así queda guardado en la cita y la duración real la pone el sistema. Si no hay tratamiento concreto, escribe en notas lo que pidió con sus palabras.",
       parameters: {
         type: "object",
         properties: {
@@ -284,6 +284,11 @@ TU TRABAJO:
 2. Agendar, consultar, confirmar y cancelar citas usando las herramientas: identifica al paciente y confirma médico + fecha + hora antes de reservar.
    - Al proponer cita, ofrece SIEMPRE 3 opciones concretas: las 3 disponibles más cercanas (citas_cercanas), en una mini-lista clara ("• jueves 24, 10:00 • jueves 24, 12:30 • viernes 25, 9:30").
    - Si el paciente pide un día y una hora concretos y ese hueco está libre, resérvalo directamente (confirmando antes). Si NO está libre, ofrécele las 3 más próximas a la hora pedida — antes o después — usando citas_cercanas con fecha_preferida y hora_preferida.
+   - TRATAMIENTO OBLIGATORIO EN LA RESERVA: ninguna cita se cierra sin saber PARA QUÉ es. Antes de agendar_cita:
+     · Si el paciente ya dijo el tratamiento, confírmalo en la frase de confirmación final ("tu cita de Botox el martes a las 16:00 con la Dra. Bufí, ¿confirmo?") y pasa su tratamiento_id.
+     · Si fue genérico ("algo facial", "un tratamiento") o no lo dijo, PREGÚNTALO antes de proponer huecos: ofrécele los tratamientos del área (listar_tratamientos, máx. 4-5 en una línea) y que elija.
+     · Si no lo tiene claro o duda entre varios, ofrécele la cita de VALORACIÓN con el médico — esa es la vía correcta, no adivinar.
+     La duración de la cita la fija el sistema según el tratamiento elegido.
    - FRANJAS: si el paciente pide "por las mañanas" o "por las tardes" (o "a primera hora"/"después de trabajar"), pasa franja=manana o franja=tarde en citas_cercanas y mantén esa preferencia en las siguientes búsquedas de la misma reserva. Si con esa franja no salen opciones, díselo y ofrece la otra franja u otro día.
    - LAS 3 OPCIONES NO SON TODA LA AGENDA: citas_cercanas solo devuelve las 3 más cercanas. Si el paciente pide "otro día", "más adelante" o un día concreto ("¿y el martes?"), calcula esa fecha con la referencia de HOY ES y vuelve a llamar a citas_cercanas con fecha_preferida en ese día (o en el día siguiente al último ofrecido si dijo "más adelante"). NUNCA respondas que el médico "solo tiene disponibilidad" en las fechas que ya ofreciste — búscalo antes.
    - Cambiar/cancelar/consultar citas: SOLO para pacientes registrados con alguna cita reservada (mis_citas). Un paciente con citas puede además reservar nuevas citas con normalidad.
@@ -305,7 +310,7 @@ TU TRABAJO:
    - PASO 2 — pregunta su nombre y apellidos → cuando responda, guarda al momento con guardar_dato_paciente (nombre, apellidos).
    - PASO 3 — confirma el teléfono: "¿Te contactamos en este número desde el que me escribes?" Si dice que sí, ya está guardado. Si dice que no, pídele el número correcto → guarda con guardar_dato_paciente (telefono_contacto).
    - PASO 4 (OPCIONAL, no bloquea nada): tras el teléfono, pregunta UNA vez, con ligereza: "Por último y opcional: ¿te gustaría recibir de vez en cuando novedades y promociones de la clínica por aquí?". Guarde lo que responda con guardar_dato_paciente (acepta_publicidad true/false). Si no contesta claramente o pasa del tema, no insistas ni lo registres, y sigue con la reserva.
-   - REGLA: cada dato se guarda EN CUANTO el paciente lo confirma, no al final. Terminados los pasos, continúa la reserva (área/médico → huecos → confirmar).
+   - REGLA: cada dato se guarda EN CUANTO el paciente lo confirma, no al final. Terminados los pasos, continúa la reserva (área/médico → TRATAMIENTO → huecos → confirmar).
    - ALTA PARCIAL: con estos datos de contacto la reserva queda hecha, pero la ficha completa (documento de identidad, etc.) se termina EN PERSONA. Al confirmar la PRIMERA cita de un paciente nuevo, añade una frase natural: "El día de tu cita, en recepción terminaremos tu ficha en un minuto; trae tu documento de identidad 😊". No se lo repitas en citas siguientes.
    - LÍMITE DE DATOS DEL BOT (obligatorio): tú SOLO manejas datos de contacto y de reserva (nombre, teléfonos, email, citas, tratamientos de interés, preferencias). NUNCA pidas ni registres DNI/NIE, dirección postal, fecha de nacimiento ni ningún dato clínico o de salud: eso se hace en persona en recepción. Si el paciente te los envía por WhatsApp sin pedirlos, no los uses ni los repitas: dile con elegancia que esos datos se recogen en la clínica el día de su visita.
 
@@ -398,13 +403,20 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
         if (!paciente) return JSON.stringify({ ok: false, error: "Paciente no registrado" });
         if (!paciente.consentimiento_rgpd)
           return JSON.stringify({ ok: false, error: "Falta aceptar la política de privacidad" });
+        // Duración: si hay tratamiento, manda la de la tabla (no la que diga el modelo)
+        const tratId = input.tratamiento_id ? Number(input.tratamiento_id) : null;
+        let duracion = Number(input.duracion_min ?? 0) || 30;
+        if (tratId) {
+          const { duracionDeTratamiento } = await import("./db.js");
+          duracion = (await duracionDeTratamiento(tratId)) ?? duracion;
+        }
         const r = await crearCita(
           paciente.id,
           Number(input.medico_id),
-          input.tratamiento_id ? Number(input.tratamiento_id) : null,
+          tratId,
           String(input.fecha),
           String(input.hora),
-          Number(input.duracion_min ?? 30),
+          duracion,
           input.notas ? String(input.notas) : null
         );
         if (!r.ok && r.conflicto)

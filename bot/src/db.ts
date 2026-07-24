@@ -315,6 +315,12 @@ export async function apuntarListaEspera(
   return { ok: true };
 }
 
+/** Duración real de un tratamiento (para no fiarse de la que diga el modelo). */
+export async function duracionDeTratamiento(tratamientoId: number): Promise<number | null> {
+  const { data } = await supabase.from("tratamientos").select("duracion_min").eq("id", tratamientoId).maybeSingle();
+  return (data as any)?.duracion_min ?? null;
+}
+
 // ---------- Agenda ----------
 
 /**
