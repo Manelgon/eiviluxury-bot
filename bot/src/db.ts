@@ -418,6 +418,28 @@ export async function historial(telefono: string, limite: number) {
     .filter((m) => m && typeof m.content === "string" && (m.role === "user" || m.role === "assistant"));
 }
 
+/** Registra una solicitud de derechos RGPD llegada por WhatsApp. */
+export async function crearSolicitudDerechos(
+  telefono: string,
+  tipoDerecho: string,
+  descripcion: string | null
+): Promise<{ ok: boolean; error?: string }> {
+  const validos = ["acceso", "rectificacion", "supresion", "portabilidad", "oposicion", "limitacion"];
+  if (!validos.includes(tipoDerecho)) return { ok: false, error: "Tipo de derecho no válido" };
+  const cliente = await clientePorTelefono(telefono);
+  const { error } = await supabase.from("derechos_arco").insert({
+    cliente_id: cliente?.id ?? null,
+    nombre: cliente ? [cliente.nombre, cliente.apellidos].filter(Boolean).join(" ") : null,
+    contacto: telefono,
+    tipo_derecho: tipoDerecho,
+    descripcion,
+    canal: "whatsapp",
+  });
+  if (error) return { ok: false, error: error.message };
+  void auditarBot("rgpd.derecho_arco.solicitud", { tipo: "derecho_arco", label: `${tipoDerecho} · ${telefono}` }, { canal: "whatsapp" });
+  return { ok: true };
+}
+
 export async function escalarARecepcion(telefono: string, motivo: string) {
   const { error } = await supabase.from("escalados").insert({ telefono, motivo });
   if (error) throw error;
