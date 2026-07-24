@@ -8,9 +8,9 @@ export const supabase = createClient(config.supabaseUrl, config.supabaseServiceK
   db: { schema: "eivi" },
 });
 
-// ---------- Clientes ----------
+// ---------- Pacientes ----------
 
-export interface Cliente {
+export interface Paciente {
   id: number;
   nombre: string | null;
   apellidos: string | null;
@@ -18,9 +18,9 @@ export interface Cliente {
   consentimiento_rgpd: boolean;
 }
 
-export async function clientePorTelefono(telefono: string): Promise<Cliente | null> {
+export async function pacientePorTelefono(telefono: string): Promise<Paciente | null> {
   const { data, error } = await supabase
-    .from("clientes")
+    .from("pacientes")
     .select("id, nombre, apellidos, email, consentimiento_rgpd")
     .eq("telefono", telefono)
     .eq("activo", true)
@@ -48,20 +48,20 @@ export async function auditarBot(accion: string, recurso: { tipo?: string; id?: 
 }
 
 /** Registra un consentimiento granular (huella RGPD). */
-export async function registrarConsentimiento(clienteId: number, tipo: string, aceptado: boolean, texto: string) {
+export async function registrarConsentimiento(pacienteId: number, tipo: string, aceptado: boolean, texto: string) {
   const { error } = await supabase.from("consentimientos").insert({
-    cliente_id: clienteId, tipo, aceptado, texto, canal: "whatsapp",
+    paciente_id: pacienteId, tipo, aceptado, texto, canal: "whatsapp",
   });
   if (error) console.error("Error registrando consentimiento:", error.message);
-  void auditarBot("bot.consentimiento.registrar", { tipo: "cliente", id: clienteId }, { tipo_consentimiento: tipo, aceptado });
+  void auditarBot("bot.consentimiento.registrar", { tipo: "paciente", id: pacienteId }, { tipo_consentimiento: tipo, aceptado });
 }
 
 /**
- * Guardado incremental del alta: cada dato se persiste en cuanto el cliente
- * lo confirma. Regla RGPD: si el cliente aún no existe, el PRIMER dato que
+ * Guardado incremental del alta: cada dato se persiste en cuanto el paciente
+ * lo confirma. Regla RGPD: si el paciente aún no existe, el PRIMER dato que
  * se guarda tiene que ser el consentimiento aceptado — sin él no se crea fila.
  */
-export async function guardarDatoCliente(
+export async function guardarDatoPaciente(
   telefono: string,
   campos: {
     consentimiento?: boolean;
@@ -71,15 +71,15 @@ export async function guardarDatoCliente(
     telefonoContacto?: string;
     publicidad?: boolean;
   }
-): Promise<{ ok: boolean; error?: string; cliente?: Cliente }> {
-  const existente = await clientePorTelefono(telefono);
+): Promise<{ ok: boolean; error?: string; paciente?: Paciente }> {
+  const existente = await pacientePorTelefono(telefono);
 
   if (!existente) {
     if (!campos.consentimiento) {
       return { ok: false, error: "Primero debe aceptar la política de privacidad; sin eso no se guarda ningún dato" };
     }
     const { data, error } = await supabase
-      .from("clientes")
+      .from("pacientes")
       .insert({
         telefono,
         consentimiento_rgpd: true,
@@ -97,8 +97,8 @@ export async function guardarDatoCliente(
       "Acepto la política de privacidad y el tratamiento de mis datos personales para la gestión de citas (aceptado por WhatsApp)");
     void registrarConsentimiento(data.id, "comunicaciones_recordatorios", true,
       "Acepto recibir recordatorios y comunicaciones operativas de mis citas por WhatsApp");
-    void auditarBot("bot.cliente.crear", { tipo: "cliente", id: data.id, label: telefono });
-    return { ok: true, cliente: data };
+    void auditarBot("bot.paciente.crear", { tipo: "paciente", id: data.id, label: telefono });
+    return { ok: true, paciente: data };
   }
 
   const cambios: Record<string, unknown> = {};
@@ -120,16 +120,16 @@ export async function guardarDatoCliente(
   if (campos.apellidos !== undefined) cambios.apellidos = campos.apellidos;
   if (campos.email !== undefined) cambios.email = campos.email;
   if (campos.telefonoContacto !== undefined) cambios.telefono_contacto = campos.telefonoContacto;
-  if (Object.keys(cambios).length === 0) return { ok: true, cliente: existente };
+  if (Object.keys(cambios).length === 0) return { ok: true, paciente: existente };
 
   const { data, error } = await supabase
-    .from("clientes")
+    .from("pacientes")
     .update(cambios)
     .eq("id", existente.id)
     .select("id, nombre, apellidos, email, consentimiento_rgpd")
     .single();
   if (error) throw error;
-  return { ok: true, cliente: data };
+  return { ok: true, paciente: data };
 }
 
 // ---------- Catálogo ----------
@@ -267,7 +267,7 @@ export async function citasCercanas(
 }
 
 export async function crearCita(
-  clienteId: number,
+  pacienteId: number,
   medicoId: number,
   tratamientoId: number | null,
   fecha: string,
@@ -284,7 +284,7 @@ export async function crearCita(
   let dup = supabase
     .from("citas")
     .select("id")
-    .eq("cliente_id", clienteId)
+    .eq("paciente_id", pacienteId)
     .in("estado", ["pendiente", "confirmada"])
     .gte("inicio", madridAUtc(fecha, "00:00").toISOString())
     .lte("inicio", madridAUtc(fecha, "23:59").toISOString());
@@ -295,7 +295,7 @@ export async function crearCita(
   const { data, error } = await supabase
     .from("citas")
     .insert({
-      cliente_id: clienteId,
+      paciente_id: pacienteId,
       medico_id: medicoId,
       tratamiento_id: tratamientoId,
       inicio: inicio.toISOString(),
@@ -308,15 +308,15 @@ export async function crearCita(
     if (error.code === "23P01") return { ok: false, conflicto: true }; // solapamiento
     throw error;
   }
-  void auditarBot("bot.cita.crear", { tipo: "cita", id: data.id }, { cliente_id: clienteId, medico_id: medicoId, fecha, hora });
+  void auditarBot("bot.cita.crear", { tipo: "cita", id: data.id }, { paciente_id: pacienteId, medico_id: medicoId, fecha, hora });
   return { ok: true, citaId: data.id };
 }
 
-export async function citasDeCliente(clienteId: number) {
+export async function citasDePaciente(pacienteId: number) {
   const { data, error } = await supabase
     .from("citas")
-    .select("id, inicio, estado, confirmada_cliente, medicos ( nombre ), tratamientos ( nombre )")
-    .eq("cliente_id", clienteId)
+    .select("id, inicio, estado, confirmada_paciente, medicos ( nombre ), tratamientos ( nombre )")
+    .eq("paciente_id", pacienteId)
     .in("estado", ["pendiente", "confirmada"])
     .gte("inicio", new Date().toISOString())
     .order("inicio");
@@ -325,48 +325,48 @@ export async function citasDeCliente(clienteId: number) {
     id: c.id,
     inicio: c.inicio,
     estado: c.estado,
-    confirmada: c.confirmada_cliente,
+    confirmada: c.confirmada_paciente,
     medico: c.medicos?.nombre,
     tratamiento: c.tratamientos?.nombre ?? null,
   }));
 }
 
 /**
- * Cancela una cita SOLO si pertenece a ese cliente. Al pasar a 'cancelada'
+ * Cancela una cita SOLO si pertenece a ese paciente. Al pasar a 'cancelada'
  * el hueco queda libre automáticamente (la agenda solo bloquea citas
  * pendientes/confirmadas). Devuelve los datos del hueco liberado para poder
- * excluirlo si el cliente reprograma.
+ * excluirlo si el paciente reprograma.
  */
 export async function cancelarCita(
   citaId: number,
-  clienteId: number
+  pacienteId: number
 ): Promise<{ ok: boolean; hueco_liberado?: { fecha: string; hora: string; medico_id: number } }> {
   const { fechaMadrid, horaMadrid: hMad } = await import("./tiempo.js");
   const { data, error } = await supabase
     .from("citas")
     .update({ estado: "cancelada" })
     .eq("id", citaId)
-    .eq("cliente_id", clienteId)
+    .eq("paciente_id", pacienteId)
     .in("estado", ["pendiente", "confirmada"])
     .select("id, inicio, medico_id");
   if (error) throw error;
   const fila = data?.[0];
   if (!fila) return { ok: false };
   const inicio = new Date(fila.inicio);
-  void auditarBot("bot.cita.cancelar", { tipo: "cita", id: citaId }, { cliente_id: clienteId });
+  void auditarBot("bot.cita.cancelar", { tipo: "cita", id: citaId }, { paciente_id: pacienteId });
   return {
     ok: true,
     hueco_liberado: { fecha: fechaMadrid(inicio), hora: hMad(inicio), medico_id: fila.medico_id },
   };
 }
 
-/** Confirma asistencia SOLO si la cita es de ese cliente. */
-export async function confirmarCita(citaId: number, clienteId: number): Promise<boolean> {
+/** Confirma asistencia SOLO si la cita es de ese paciente. */
+export async function confirmarCita(citaId: number, pacienteId: number): Promise<boolean> {
   const { data, error } = await supabase
     .from("citas")
-    .update({ confirmada_cliente: true, estado: "confirmada" })
+    .update({ confirmada_paciente: true, estado: "confirmada" })
     .eq("id", citaId)
-    .eq("cliente_id", clienteId)
+    .eq("paciente_id", pacienteId)
     .in("estado", ["pendiente", "confirmada"])
     .select("id");
   if (error) throw error;
@@ -380,7 +380,7 @@ export async function citasParaRecordar(horasAntes: number) {
   const hasta = new Date(Date.now() + (horasAntes + 0.5) * 3600_000);
   const { data, error } = await supabase
     .from("citas")
-    .select("id, inicio, clientes ( id, telefono, nombre ), medicos ( nombre ), tratamientos ( nombre )")
+    .select("id, inicio, pacientes ( id, telefono, nombre ), medicos ( nombre ), tratamientos ( nombre )")
     .in("estado", ["pendiente", "confirmada"])
     .eq("recordatorio_enviado", false)
     .gte("inicio", desde.toISOString())
@@ -426,10 +426,10 @@ export async function crearSolicitudDerechos(
 ): Promise<{ ok: boolean; error?: string }> {
   const validos = ["acceso", "rectificacion", "supresion", "portabilidad", "oposicion", "limitacion"];
   if (!validos.includes(tipoDerecho)) return { ok: false, error: "Tipo de derecho no válido" };
-  const cliente = await clientePorTelefono(telefono);
+  const paciente = await pacientePorTelefono(telefono);
   const { error } = await supabase.from("derechos_arco").insert({
-    cliente_id: cliente?.id ?? null,
-    nombre: cliente ? [cliente.nombre, cliente.apellidos].filter(Boolean).join(" ") : null,
+    paciente_id: paciente?.id ?? null,
+    nombre: paciente ? [paciente.nombre, paciente.apellidos].filter(Boolean).join(" ") : null,
     contacto: telefono,
     tipo_derecho: tipoDerecho,
     descripcion,

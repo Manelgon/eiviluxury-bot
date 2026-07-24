@@ -41,8 +41,8 @@ create table if not exists eivi.tratamientos (
   activo              boolean not null default true
 );
 
--- Clientes (pacientes) con consentimiento RGPD
-create table if not exists eivi.clientes (
+-- Pacientes con consentimiento RGPD
+create table if not exists eivi.pacientes (
   id                    bigint generated always as identity primary key,
   telefono              text not null unique,   -- WhatsApp desde el que escribe, 34612345678 sin '+'
   telefono_contacto     text,                   -- teléfono preferido si difiere del WhatsApp
@@ -79,7 +79,7 @@ create table if not exists eivi.bloqueos (
 -- Citas
 create table if not exists eivi.citas (
   id                    bigint generated always as identity primary key,
-  cliente_id            bigint not null references eivi.clientes(id),
+  paciente_id            bigint not null references eivi.pacientes(id),
   medico_id             bigint not null references eivi.medicos(id),
   tratamiento_id        bigint references eivi.tratamientos(id),
   inicio                timestamptz not null,
@@ -88,14 +88,14 @@ create table if not exists eivi.citas (
                         check (estado in ('pendiente','confirmada','cancelada','completada','no_show')),
   notas                 text,
   recordatorio_enviado  boolean not null default false,
-  confirmada_cliente    boolean not null default false,
+  confirmada_paciente    boolean not null default false,
   creada_via            text not null default 'whatsapp',
   created_at            timestamptz not null default now(),
   check (fin > inicio)
 );
 
 create index if not exists idx_citas_medico_inicio on eivi.citas(medico_id, inicio);
-create index if not exists idx_citas_cliente on eivi.citas(cliente_id, inicio);
+create index if not exists idx_citas_paciente on eivi.citas(paciente_id, inicio);
 
 -- Evitar dobles reservas del mismo médico (solapamiento) en citas activas
 create extension if not exists btree_gist;
@@ -136,11 +136,11 @@ create table if not exists eivi.escalados (
 create or replace view eivi.agenda_hoy as
 select c.inicio at time zone 'Europe/Madrid' as hora,
        m.nombre as medico,
-       cl.nombre || coalesce(' ' || cl.apellidos, '') as cliente,
-       cl.telefono, t.nombre as tratamiento, c.estado, c.confirmada_cliente
+       cl.nombre || coalesce(' ' || cl.apellidos, '') as paciente,
+       cl.telefono, t.nombre as tratamiento, c.estado, c.confirmada_paciente
 from eivi.citas c
 join eivi.medicos m on m.id = c.medico_id
-join eivi.clientes cl on cl.id = c.cliente_id
+join eivi.pacientes cl on cl.id = c.paciente_id
 left join eivi.tratamientos t on t.id = c.tratamiento_id
 where (c.inicio at time zone 'Europe/Madrid')::date = (now() at time zone 'Europe/Madrid')::date
   and c.estado in ('pendiente','confirmada')
@@ -158,7 +158,7 @@ alter table eivi.areas          enable row level security;
 alter table eivi.medicos        enable row level security;
 alter table eivi.medico_areas   enable row level security;
 alter table eivi.tratamientos   enable row level security;
-alter table eivi.clientes       enable row level security;
+alter table eivi.pacientes       enable row level security;
 alter table eivi.horarios       enable row level security;
 alter table eivi.bloqueos       enable row level security;
 alter table eivi.citas          enable row level security;
