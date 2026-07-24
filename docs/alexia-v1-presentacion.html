@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alexia · Asistente Virtual de Clínica EiviLuxury</title>
+<style>
+  :root{
+    --oro:#b3925f; --oro-claro:#d4bc94; --tinta:#1c1a17; --gris:#5f5a52;
+    --marfil:#faf7f2; --blanco:#ffffff; --linea:#e8e0d3; --verde:#4d7c5f;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--marfil);color:var(--tinta);line-height:1.65}
+  .wrap{max-width:880px;margin:0 auto;padding:0 20px}
+
+  /* Cabecera */
+  header{background:linear-gradient(160deg,#211e1a 0%,#2e2a24 60%,#3a3227 100%);color:var(--blanco);padding:48px 0 42px;text-align:center}
+  .logo{display:inline-block;margin-bottom:18px}
+  .marca{font-size:30px;letter-spacing:6px;font-weight:300;color:var(--oro-claro)}
+  .marca b{font-weight:600;color:#fff}
+  .sublinea{width:64px;height:1px;background:var(--oro);margin:14px auto}
+  .marca-sub{font-size:11px;letter-spacing:5px;text-transform:uppercase;color:#bdb3a2}
+  header h1{font-size:clamp(24px,4.5vw,34px);font-weight:300;margin-top:30px}
+  header h1 strong{font-weight:600;color:var(--oro-claro)}
+  header p{color:#cfc7b8;max-width:560px;margin:12px auto 0;font-size:15px}
+  .pill{display:inline-block;margin-top:22px;border:1px solid var(--oro);color:var(--oro-claro);font-size:12px;letter-spacing:3px;text-transform:uppercase;padding:7px 20px;border-radius:999px}
+
+  /* Secciones */
+  section{padding:44px 0 8px}
+  h2{font-size:13px;letter-spacing:4px;text-transform:uppercase;color:var(--oro);margin-bottom:6px}
+  .h2-big{font-size:clamp(20px,3.5vw,26px);font-weight:600;margin-bottom:22px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+  .card{background:var(--blanco);border:1px solid var(--linea);border-radius:14px;padding:22px}
+  .card .ico{font-size:22px;margin-bottom:10px}
+  .card h3{font-size:15.5px;margin-bottom:6px}
+  .card p{font-size:14px;color:var(--gris)}
+
+  /* Flujo */
+  .flujo{background:var(--blanco);border:1px solid var(--linea);border-radius:14px;padding:26px 22px;margin-top:6px}
+  .paso{display:flex;gap:14px;padding:12px 0;border-bottom:1px solid var(--linea)}
+  .paso:last-child{border-bottom:none}
+  .paso .n{flex:0 0 30px;height:30px;border-radius:50%;background:var(--oro);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600}
+  .paso div p{font-size:14px;color:var(--gris)}
+  .paso div b{font-size:14.5px}
+
+  /* Chat demo */
+  .chat{background:#e7ddd0;border-radius:14px;padding:18px;max-width:420px;margin:10px auto 0}
+  .burbuja{background:#fff;border-radius:12px;padding:10px 14px;font-size:13.5px;margin-bottom:8px;box-shadow:0 1px 1px rgba(0,0,0,.06);max-width:88%}
+  .burbuja.cliente{background:#dcf2c8;margin-left:auto}
+  .burbuja small{display:block;color:#9a917f;font-size:10px;text-align:right;margin-top:3px}
+  .burbuja ul{list-style:none;margin-top:4px}
+  .burbuja li::before{content:"• ";color:var(--oro)}
+
+  /* Seguridad */
+  .seguro{border-left:3px solid var(--oro);background:var(--blanco);border-radius:0 14px 14px 0;padding:18px 20px;margin-bottom:12px}
+  .seguro b{display:block;font-size:14.5px;margin-bottom:2px}
+  .seguro p{font-size:13.5px;color:var(--gris)}
+
+  /* Roadmap */
+  .road{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed var(--linea)}
+  .road:last-child{border-bottom:none}
+  .road .tag{flex:0 0 auto;font-size:10.5px;letter-spacing:2px;text-transform:uppercase;padding:4px 10px;border-radius:999px;margin-top:2px}
+  .tag.v2{background:#f2e9da;color:#8a6d3f}
+  .tag.prep{background:#e3ece5;color:var(--verde)}
+  .road p{font-size:14px;color:var(--gris)}
+  .road b{color:var(--tinta)}
+
+  /* Estado */
+  .estado{background:linear-gradient(160deg,#211e1a,#35302a);color:#fff;border-radius:16px;padding:28px 24px;margin:34px 0}
+  .estado h3{color:var(--oro-claro);font-weight:500;font-size:18px;margin-bottom:8px}
+  .estado p{font-size:14px;color:#d8d0c2}
+
+  footer{text-align:center;padding:26px 0 40px;color:#a39a89;font-size:12.5px}
+  footer .mini{letter-spacing:3px;text-transform:uppercase;color:var(--oro);font-size:11px;margin-bottom:4px}
+  footer .credito{margin-top:18px;padding-top:16px;border-top:1px solid var(--linea);font-size:12px;line-height:1.8}
+  footer .credito a{color:var(--gris);text-decoration:none}
+  footer .credito a b{color:var(--oro)}
+  footer .credito .copy{font-size:11px;color:#b5ac9b}
+
+  @media(max-width:520px){
+    header{padding:36px 0 32px}
+    .marca{font-size:24px;letter-spacing:4px}
+    section{padding:34px 0 4px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo">
+      <div class="marca">EIVI<b>LUXURY</b></div>
+      <div class="sublinea"></div>
+      <div class="marca-sub">Clínica · Ibiza</div>
+    </div>
+    <h1>Conoce a <strong>Alexia</strong>, tu asistente virtual de WhatsApp</h1>
+    <p>Atiende a tus pacientes las 24 horas: informa, agenda, recuerda y cancela citas — con la elegancia y la discreción que exige la clínica.</p>
+    <span class="pill">Versión 1 · En pruebas</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <h2>Qué hace ya</h2>
+  <div class="h2-big">Todo esto funciona hoy</div>
+  <div class="grid">
+    <div class="card"><div class="ico">💬</div><h3>Conversación natural</h3><p>Nada de "pulse 1". Responde como una persona, en el idioma del paciente, saludando según la hora del día. A los clientes registrados los reconoce y saluda por su nombre.</p></div>
+    <div class="card"><div class="ico">🗓️</div><h3>Agenda real por médico</h3><p>Trabaja sobre el calendario real de cada doctor/a (horarios, vacaciones, bloqueos). Propone siempre las 3 citas disponibles más cercanas a lo que pide el paciente. Imposible el doble-booking.</p></div>
+    <div class="card"><div class="ico">💉</div><h3>Información de tratamientos</h3><p>Conoce las fichas completas de los tratamientos de la clínica. Da precios solo de servicios con tarifa fija; lo que requiere criterio médico lo dirige a cita de valoración.</p></div>
+    <div class="card"><div class="ico">🔔</div><h3>Recordatorios automáticos</h3><p>24h antes de cada cita escribe al paciente pidiendo confirmación. Si no puede asistir, la reagenda ahí mismo. Menos plantones, agenda más llena.</p></div>
+    <div class="card"><div class="ico">🔄</div><h3>Gestión de citas</h3><p>El paciente consulta, cambia o cancela sus citas por WhatsApp — solo las suyas. Puede tener varias citas el mismo día si son de tratamientos distintos, nunca duplicadas.</p></div>
+    <div class="card"><div class="ico">🛠️</div><h3>Control desde recepción</h3><p>Precios, preguntas frecuentes, horarios, vacaciones y la agenda del día se gestionan desde un panel sencillo, sin tocar nada técnico.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Alta de pacientes nuevos</h2>
+  <div class="h2-big">Con la privacidad por delante</div>
+  <div class="flujo">
+    <div class="paso"><span class="n">1</span><div><b>Consentimiento primero.</b><p>Antes de guardar un solo dato, Alexia envía la política de privacidad y pide aceptación expresa. Queda registrada con fecha y hora. Sin un "sí" claro, no hay registro ni reserva.</p></div></div>
+    <div class="paso"><span class="n">2</span><div><b>Nombre y apellidos.</b><p>Cada dato se guarda en el momento en que el paciente lo confirma.</p></div></div>
+    <div class="paso"><span class="n">3</span><div><b>Confirmación del teléfono.</b><p>Verifica si el número de WhatsApp sirve como contacto o prefiere facilitar otro.</p></div></div>
+    <div class="paso"><span class="n">✓</span><div><b>Y a reservar.</b><p>Área o tratamiento → 3 huecos más cercanos → confirmación. Todo en la misma conversación.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Así se ve</h2>
+  <div class="h2-big">Ejemplo de conversación</div>
+  <div class="chat">
+    <div class="burbuja cliente">Hola, ¿hacéis tratamiento para las manchas de la cara?<small>18:02</small></div>
+    <div class="burbuja">Hola, buenas tardes 👋 Soy Alexia, la asistente de <b>Clínica EiviLuxury</b>. Sí — tratamos las manchas faciales con láser y peelings médicos, siempre tras una valoración con nuestro equipo. ¿Quieres que te reserve una cita de valoración?<small>18:02</small></div>
+    <div class="burbuja cliente">Sí, si puede ser el jueves por la tarde<small>18:03</small></div>
+    <div class="burbuja">El jueves tengo estas opciones:<ul><li>16:30 · Dra. Cris Herrera</li><li>17:30 · Dra. Cris Herrera</li><li>18:00 · Dr. Diogo Figueiredo</li></ul>¿Cuál te va mejor?<small>18:03</small></div>
+  </div>
+</section>
+
+<section>
+  <h2>Seguridad</h2>
+  <div class="h2-big">Los límites que nunca cruza</div>
+  <div class="seguro"><b>Cero diagnósticos ni consejo médico</b><p>Ante cualquier consulta clínica deriva a valoración con el médico. Si detecta una urgencia, indica llamar al 112 o a la clínica de inmediato.</p></div>
+  <div class="seguro"><b>Confidencialidad absoluta entre pacientes</b><p>Solo puede acceder a los datos y citas del teléfono que escribe. Técnicamente no existe forma de consultar información de otro paciente, insista quien insista.</p></div>
+  <div class="seguro"><b>Nunca inventa</b><p>Precios, normas o información que no tiene, no se los inventa: lo deriva a recepción (971 312 902) y deja la conversación anotada para seguimiento humano.</p></div>
+</section>
+
+<section>
+  <h2>Hoja de ruta</h2>
+  <div class="h2-big">Lo que viene en la v2</div>
+  <div class="road"><span class="tag v2">v2</span><p><b>Reglas finas de reserva:</b> antelación mínima, horizonte máximo de reserva y límite de citas activas por paciente.</p></div>
+  <div class="road"><span class="tag v2">v2</span><p><b>Política de cancelación con plazo:</b> por debajo de 24-48h, la cancelación pasa por recepción.</p></div>
+  <div class="road"><span class="tag v2">v2</span><p><b>Seguimiento de confirmaciones:</b> segundo recordatorio si el paciente no responde y control de ausencias reincidentes.</p></div>
+  <div class="road"><span class="tag v2">v2</span><p><b>Lista de espera</b> cuando no hay huecos, y aviso automático si se libera uno.</p></div>
+  <div class="road"><span class="tag v2">v2</span><p><b>Traspaso a humano con silencio:</b> cuando recepción tome una conversación, Alexia se aparta automáticamente.</p></div>
+  <div class="road"><span class="tag prep">Preparar</span><p><b>Datos reales antes del lanzamiento:</b> horarios definitivos de cada doctor/a, precios cerrados, festivos del calendario y carga de pacientes actuales.</p></div>
+  <div class="road"><span class="tag prep">Preparar</span><p><b>Visto bueno de protección de datos:</b> el flujo de consentimiento ya queda registrado, pero al tratarse de datos de salud conviene la revisión de vuestro asesor RGPD.</p></div>
+</section>
+
+<div class="estado">
+  <h3>Estado actual</h3>
+  <p>Alexia está operativa en fase de pruebas, atendiendo únicamente a números autorizados. Cuando quieras te hacemos una demostración en directo desde tu propio móvil y definimos juntos las reglas de la v2 y la fecha de apertura a pacientes.</p>
+</div>
+
+</div>
+
+<footer>
+  <div class="mini">Alexia · Asistente Virtual</div>
+  Clínica EiviLuxury · Carrer Canaries 41, Eivissa · 971 312 902
+  <div class="credito">
+    Diseño y desarrollo: <a href="https://automatizatelo.com" target="_blank" rel="noopener"><b>Manel Méndez</b> · automatizatelo.com</a><br>
+    Automatización e inteligencia artificial para negocios<br>
+    <span class="copy">© 2026 automatizatelo.com — Solución desarrollada en exclusiva para Clínica EiviLuxury</span>
+  </div>
+</footer>
+
+</body>
+</html>

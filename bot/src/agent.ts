@@ -86,6 +86,8 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           duracion_min: { type: "integer", description: "Duración del tratamiento; 30 si no se sabe" },
           fecha_preferida: { type: "string", description: "YYYY-MM-DD si el cliente pidió un día (opcional)" },
           hora_preferida: { type: "string", description: "HH:MM si el cliente pidió una hora (opcional, requiere fecha)" },
+          excluir_fecha: { type: "string", description: "YYYY-MM-DD de un hueco que NO se debe ofrecer (ej. el de una cita recién cancelada)" },
+          excluir_hora: { type: "string", description: "HH:MM del hueco a excluir (junto con excluir_fecha)" },
         },
         required: ["medico_id"],
       },
@@ -139,7 +141,8 @@ const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "cancelar_cita",
-      description: "Cancela una cita del cliente que escribe (id de mis_citas). Confirmar antes con el cliente.",
+      description:
+        "Cancela una cita del cliente que escribe (id de mis_citas). SOLO llamarla tras la confirmación EXPLÍCITA del cliente. Devuelve el hueco liberado: si el cliente quiere reprogramar, pásalo a citas_cercanas como excluir_fecha/excluir_hora para no reofrecérselo.",
       parameters: {
         type: "object",
         properties: { cita_id: { type: "integer" } },
@@ -227,6 +230,11 @@ TU TRABAJO:
    - Al proponer cita, ofrece SIEMPRE 3 opciones concretas: las 3 disponibles más cercanas (citas_cercanas), en una mini-lista clara ("• jueves 24, 10:00 • jueves 24, 12:30 • viernes 25, 9:30").
    - Si el cliente pide un día y una hora concretos y ese hueco está libre, resérvalo directamente (confirmando antes). Si NO está libre, ofrécele las 3 más próximas a la hora pedida — antes o después — usando citas_cercanas con fecha_preferida y hora_preferida.
    - Cambiar/cancelar/consultar citas: SOLO para clientes registrados con alguna cita reservada (mis_citas). Un cliente con citas puede además reservar nuevas citas con normalidad.
+   - FLUJO DE CANCELACIÓN (orden obligatorio):
+     a) Si el cliente tiene VARIAS citas y no especificó cuál, muéstrale cada una (fecha, hora, médico, tratamiento) y pregunta cuál quiere cancelar o reprogramar.
+     b) Identificada la cita, pregunta PRIMERO si desea reprogramarla para otro momento (sí/no).
+     c) Tenga o no reprogramación, ANTES de cancelar pide confirmación EXPLÍCITA de la cancelación, igual de estricta que la de privacidad: "¿Me confirmas que cancelo tu cita del jueves 24 a las 10:00 con la Dra. Bufí?". Solo un "sí" claro permite llamar a cancelar_cita; si duda o no responde claramente, la cita se queda como está.
+     d) Cancelada la cita (el hueco queda libre para otros clientes automáticamente), si dijo que quería reprogramar: ofrece las 3 siguientes disponibles con citas_cercanas pasando excluir_fecha/excluir_hora con el hueco_liberado que devolvió cancelar_cita — NUNCA le reofrezcas el mismo hueco que acaba de cancelar. Si dijo que no, despídete deseándole un buen día.
    - Un cliente PUEDE tener varias citas el mismo día si son de áreas/tratamientos distintos (ej. nutrición por la mañana y láser por la tarde). Lo que NO puede es tener dos citas del mismo tratamiento (o mismo médico) el mismo día — el sistema lo rechazará: ofrécele otro día o cambiar la existente.
 3. Alta de nuevos clientes — SOLO como parte de reservar una cita, nunca como opción suelta. NUNCA ofrezcas "registrarte" como servicio: a quien no es cliente dale información libremente sin pedirle datos. El alta empieza únicamente cuando quiere AGENDAR y identificar_cliente indica que no está registrado (o sin consentimiento). El ORDEN del alta es OBLIGATORIO, un paso por mensaje:
    - PASO 1 — PRIVACIDAD (puerta de entrada): explícale en una frase que para darle de alta necesitas su conformidad con la política de privacidad, envíale el enlace (${config.privacidadUrl}) y pide confirmación EXPLÍCITA ("¿la aceptas?"). Solo un "sí/acepto/de acuerdo" claro permite continuar → en ese momento llama a guardar_dato_cliente con acepta_privacidad=true. Si no responde afirmativamente de forma explícita, si duda o si la rechaza: NO continúes el flujo de agendar, no guardes ningún dato, y con elegancia indícale que puede llamar al 971 312 902.
@@ -287,7 +295,10 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
           Number(input.medico_id),
           Number(input.duracion_min ?? 30),
           input.fecha_preferida ? String(input.fecha_preferida) : null,
-          input.hora_preferida ? String(input.hora_preferida) : null
+          input.hora_preferida ? String(input.hora_preferida) : null,
+          input.excluir_fecha && input.excluir_hora
+            ? { fecha: String(input.excluir_fecha), hora: String(input.excluir_hora) }
+            : null
         );
         return JSON.stringify({ opciones });
       }
@@ -331,8 +342,10 @@ async function ejecutarTool(nombre: string, input: Record<string, unknown>, tele
       case "cancelar_cita": {
         const cliente = await clientePorTelefono(telefono);
         if (!cliente) return JSON.stringify({ ok: false, error: "Cliente no registrado" });
-        const ok = await cancelarCita(Number(input.cita_id), cliente.id);
-        return JSON.stringify({ ok, error: ok ? undefined : "No existe esa cita activa para este cliente" });
+        const r = await cancelarCita(Number(input.cita_id), cliente.id);
+        return JSON.stringify(
+          r.ok ? r : { ok: false, error: "No existe esa cita activa para este cliente" }
+        );
       }
       case "confirmar_cita": {
         const cliente = await clientePorTelefono(telefono);

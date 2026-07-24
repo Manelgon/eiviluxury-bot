@@ -189,7 +189,8 @@ export async function citasCercanas(
   medicoId: number,
   duracionMin: number,
   fechaPref: string | null,
-  horaPref: string | null
+  horaPref: string | null,
+  excluir: { fecha: string; hora: string } | null = null
 ): Promise<{ fecha: string; hora: string }[]> {
   const { hoyMadrid, sumarDias } = await import("./tiempo.js");
   const base = fechaPref ?? hoyMadrid();
@@ -198,7 +199,10 @@ export async function citasCercanas(
   for (let d = 0; d < 21; d++) {
     const fecha = sumarDias(base, d);
     const huecos = await huecosDisponibles(medicoId, fecha, duracionMin);
-    for (const hora of huecos) todos.push({ fecha, hora });
+    for (const hora of huecos) {
+      if (excluir && excluir.fecha === fecha && excluir.hora === hora) continue; // no reofrecer el hueco recién cancelado
+      todos.push({ fecha, hora });
+    }
     // Sin hora preferida basta con las 3 primeras; con hora preferida
     // necesitamos el día pedido completo + reserva de días siguientes.
     if (!horaPref && todos.length >= 3) break;
@@ -282,17 +286,32 @@ export async function citasDeCliente(clienteId: number) {
   }));
 }
 
-/** Cancela una cita SOLO si pertenece a ese cliente. */
-export async function cancelarCita(citaId: number, clienteId: number): Promise<boolean> {
+/**
+ * Cancela una cita SOLO si pertenece a ese cliente. Al pasar a 'cancelada'
+ * el hueco queda libre automáticamente (la agenda solo bloquea citas
+ * pendientes/confirmadas). Devuelve los datos del hueco liberado para poder
+ * excluirlo si el cliente reprograma.
+ */
+export async function cancelarCita(
+  citaId: number,
+  clienteId: number
+): Promise<{ ok: boolean; hueco_liberado?: { fecha: string; hora: string; medico_id: number } }> {
+  const { fechaMadrid, horaMadrid: hMad } = await import("./tiempo.js");
   const { data, error } = await supabase
     .from("citas")
     .update({ estado: "cancelada" })
     .eq("id", citaId)
     .eq("cliente_id", clienteId)
     .in("estado", ["pendiente", "confirmada"])
-    .select("id");
+    .select("id, inicio, medico_id");
   if (error) throw error;
-  return (data?.length ?? 0) > 0;
+  const fila = data?.[0];
+  if (!fila) return { ok: false };
+  const inicio = new Date(fila.inicio);
+  return {
+    ok: true,
+    hueco_liberado: { fecha: fechaMadrid(inicio), hora: hMad(inicio), medico_id: fila.medico_id },
+  };
 }
 
 /** Confirma asistencia SOLO si la cita es de ese cliente. */

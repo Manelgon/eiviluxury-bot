@@ -33,6 +33,11 @@ export function formatoLargo(d: Date): string {
   return `${f}, ${h}`;
 }
 
+/** "YYYY-MM-DD" en Madrid de un instante. */
+export function fechaMadrid(d: Date): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: TZ }).format(d);
+}
+
 /** "HH:MM" en Madrid de un instante. */
 export function horaMadrid(d: Date): string {
   return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
