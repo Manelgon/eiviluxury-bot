@@ -327,7 +327,7 @@ export async function huecosDisponibles(medicoId: number, fecha: string, duracio
       .eq("medico_id", medicoId)
       .gte("fin", madridAUtc(fecha, "00:00").toISOString())
       .lte("inicio", madridAUtc(fecha, "23:59").toISOString()),
-    supabase.from("medicos").select("antelacion_horas").eq("id", medicoId).maybeSingle(),
+    supabase.from("medicos").select("antelacion_horas, tolerancia_fin_min").eq("id", medicoId).maybeSingle(),
   ]);
   if (horarios.error) throw horarios.error;
   if (citas.error) throw citas.error;
@@ -341,15 +341,20 @@ export async function huecosDisponibles(medicoId: number, fecha: string, duracio
   // Antelación mínima del médico (freelancer): 0 = acepta huecos al momento
   const antelacionHoras = (ficha.data as any)?.antelacion_horas ?? 0;
   const minInicio = new Date(Date.now() + antelacionHoras * 3600_000);
+  // Tolerancia de cierre: minutos que el médico acepta alargar al FINAL del
+  // tramo para no perder el último hueco del día (el hueco debe EMPEZAR
+  // dentro del horario; solo puede PASARSE hasta la tolerancia).
+  const toleranciaMin = (ficha.data as any)?.tolerancia_fin_min ?? 0;
   const huecos: string[] = [];
 
   for (const h of horarios.data ?? []) {
     const iniStr = String(h.hora_inicio).slice(0, 5);
     const finStr = String(h.hora_fin).slice(0, 5);
     const finTramo = madridAUtc(fecha, finStr);
+    const finConTolerancia = sumarMin(finTramo, toleranciaMin);
     let cursor = madridAUtc(fecha, iniStr);
     if (cursor < minInicio) cursor = minInicio; // no ofrecer antes de la antelación
-    while (sumarMin(cursor, duracionMin) <= finTramo) {
+    while (cursor < finTramo && sumarMin(cursor, duracionMin) <= finConTolerancia) {
       const slotFin = sumarMin(cursor, duracionMin);
       const choque = ocupado.find((o) => cursor < o.fin && slotFin > o.ini);
       if (choque) {
